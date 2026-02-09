@@ -608,8 +608,7 @@ try:
         mostrar_resumen_detallado(df_filtrado, protocolo, seccion='tab3')
     
     st.markdown("---")
-    st.markdown("*Dashboard desarrollado por Equipo de Especialidades Técnicas - IST*")
-    st.caption("Versión Producción - Datos desde Google Sheets + DuckDB")
+    st.caption("Versión Producción - Preparado por Diego Vicente Contreras")
 
 except Exception as e:
     st.error(f"❌ Error al cargar o procesar los datos: {str(e)}")
