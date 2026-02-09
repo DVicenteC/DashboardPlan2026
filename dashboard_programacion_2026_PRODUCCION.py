@@ -10,7 +10,8 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime
-import os
+import duckdb
+import re
 
 # Configuración de página
 st.set_page_config(
@@ -36,47 +37,113 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ============================================================================
-# CONFIGURACIÓN DE RUTA (Para Streamlit Cloud)
+# CONFIGURACIÓN DE FUENTE DE DATOS (Google Sheets + DuckDB)
 # ============================================================================
 
-# Obtener ruta del directorio actual
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-EXCEL_FILE = os.path.join(BASE_DIR, 'Programacion_Consolidada Higiene_A4.1 y A5.1_06022026.xlsx')
+def construir_url_exportacion(url_sheet):
+    """Construye la URL de exportación CSV a partir de la URL de Google Sheets"""
+    # Extraer spreadsheet ID
+    match_id = re.search(r'/d/([a-zA-Z0-9_-]+)', url_sheet)
+    if not match_id:
+        st.error("❌ No se pudo extraer el ID del spreadsheet de la URL configurada en secrets.toml")
+        st.stop()
+    spreadsheet_id = match_id.group(1)
+
+    # Extraer gid (ID de pestaña)
+    match_gid = re.search(r'gid=(\d+)', url_sheet)
+    gid = match_gid.group(1) if match_gid else '0'
+
+    return f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/export?format=csv&gid={gid}"
 
 # ============================================================================
 # FUNCIONES DE CARGA Y PROCESAMIENTO
 # ============================================================================
 
-@st.cache_data
-def cargar_datos(archivo=EXCEL_FILE):
-    """Carga y prepara el archivo de programación"""
-    
-    # Validar que el archivo existe
-    if not os.path.exists(archivo):
-        st.error(f"❌ Archivo no encontrado: {archivo}")
-        st.info("Archivos disponibles en directorio:")
-        st.write(os.listdir(BASE_DIR))
-        st.stop()
-    
+def normalizar_columnas(df):
+    """
+    Normaliza nombres de columnas del CSV de Google Sheets para que coincidan
+    con los nombres esperados por el código (con tildes y caracteres especiales).
+    Google Sheets exporta CSV sin tildes en los encabezados.
+    """
+    mapeo_columnas = {
+        'Identificador unico (ID) centro de trabajo (CT)': 'Identificador único (ID) centro de trabajo (CT)',
+        'Fecha de Evaluacion Cualitativa 2026': 'Fecha de Evaluación Cualitativa 2026',
+        'Fecha de Evaluacion Cuantitativa 2026': 'Fecha de Evaluación Cuantitativa 2026',
+        'Fecha de ultima Evaluacion Cualitativa': 'Fecha de última Evaluación Cualitativa',
+        'Fecha de ultima Evaluacion Cuantitativa': 'Fecha de última Evaluación Cuantitativa',
+        'Fecha de ultima Evaluacion Vigilancia de Salud': 'Fecha de última Evaluación Vigilancia de Salud',
+        'Motivo de programacion': 'Motivo de programación',
+        'Origen de Inclusion': 'Origen de Inclusión',
+        'N de Trabajadores(as) CT': 'N° de Trabajadores(as) CT',
+        'N trabajadores que deben ingresar a Vigilancia de Salud Hombres': 'N° trabajadores que deben ingresar a Vigilancia de Salud Hombres',
+        'N trabajadores que deben ingresar a Vigilancia de Salud Mujeres': 'N° trabajadores que deben ingresar a Vigilancia de Salud Mujeres',
+        'N trabajadores en Vigilancia de Salud Hombres': 'N° trabajadores en Vigilancia de Salud Hombres',
+        'N trabajadores en Vigilancia de Salud Mujeres': 'N° trabajadores en Vigilancia de Salud Mujeres',
+    }
+    df = df.rename(columns=mapeo_columnas)
+    return df
+
+def parsear_fecha_flexible(serie):
+    """
+    Parsea una serie de fechas que puede tener formatos mixtos:
+    - DD-MM-YYYY (formato Excel original)
+    - M/D/YYYY o MM/DD/YYYY (formato Google Sheets export)
+    - YYYY-MM-DD (formato ISO)
+    """
+    # Intentar formato DD-MM-YYYY primero
+    resultado = pd.to_datetime(serie, format='%d-%m-%Y', errors='coerce')
+
+    # Para las que fallaron, intentar formato M/D/YYYY (US)
+    mascara_nulos = resultado.isna() & serie.notna() & (serie.astype(str).str.strip() != '')
+    if mascara_nulos.any():
+        resultado[mascara_nulos] = pd.to_datetime(serie[mascara_nulos], format='%m/%d/%Y', errors='coerce')
+
+    # Para las que aún fallaron, intentar formato mixto automático
+    mascara_nulos2 = resultado.isna() & serie.notna() & (serie.astype(str).str.strip() != '')
+    if mascara_nulos2.any():
+        resultado[mascara_nulos2] = pd.to_datetime(serie[mascara_nulos2], dayfirst=True, errors='coerce')
+
+    return resultado
+
+@st.cache_data(ttl=300)
+def cargar_datos():
+    """Carga datos desde Google Sheets y los procesa con DuckDB en memoria"""
+
     try:
-        df_2026 = pd.read_excel(archivo, sheet_name='Programación 2026')
-        
-        # Convertir fechas
-        df_2026['Fecha de Evaluación Cualitativa 2026'] = pd.to_datetime(
-            df_2026['Fecha de Evaluación Cualitativa 2026'], 
-            format='%d-%m-%Y', 
-            errors='coerce'
+        # Leer URL desde secrets
+        url_sheet = st.secrets["gsheets"]["url"]
+        export_url = construir_url_exportacion(url_sheet)
+
+        # Descargar CSV desde Google Sheets
+        df_2026 = pd.read_csv(export_url)
+
+        # Normalizar nombres de columnas (CSV no tiene tildes)
+        df_2026 = normalizar_columnas(df_2026)
+
+        # Cargar en DuckDB en memoria para mayor velocidad
+        con = duckdb.connect(':memory:')
+        con.register('programacion_raw', df_2026)
+
+        # Usar DuckDB para la consulta inicial (aprovecha optimización columnar)
+        df_2026 = con.execute("SELECT * FROM programacion_raw").fetchdf()
+        con.close()
+
+        # Convertir fechas con parser flexible (maneja formatos mixtos del CSV)
+        df_2026['Fecha de Evaluación Cualitativa 2026'] = parsear_fecha_flexible(
+            df_2026['Fecha de Evaluación Cualitativa 2026']
         )
-        df_2026['Fecha de Evaluación Cuantitativa 2026'] = pd.to_datetime(
-            df_2026['Fecha de Evaluación Cuantitativa 2026'], 
-            format='%d-%m-%Y', 
-            errors='coerce'
+        df_2026['Fecha de Evaluación Cuantitativa 2026'] = parsear_fecha_flexible(
+            df_2026['Fecha de Evaluación Cuantitativa 2026']
         )
-        
+
         return df_2026
-    
+
+    except KeyError:
+        st.error("❌ No se encontró la URL de Google Sheets en secrets.toml")
+        st.info("Configura el archivo `.streamlit/secrets.toml` con la sección [gsheets] y la clave `url`.")
+        st.stop()
     except Exception as e:
-        st.error(f"❌ Error al cargar el archivo: {str(e)}")
+        st.error(f"❌ Error al cargar datos desde Google Sheets: {str(e)}")
         st.stop()
 
 @st.cache_data
@@ -542,7 +609,7 @@ try:
     
     st.markdown("---")
     st.markdown("*Dashboard desarrollado por Equipo de Especialidades Técnicas - IST*")
-    st.caption("Versión Producción - Optimizado para Streamlit Cloud")
+    st.caption("Versión Producción - Datos desde Google Sheets + DuckDB")
 
 except Exception as e:
     st.error(f"❌ Error al cargar o procesar los datos: {str(e)}")
@@ -550,10 +617,10 @@ except Exception as e:
     
     # Información de debug
     with st.expander("🔍 Información de Debug"):
-        st.write("**Directorio actual:**", BASE_DIR)
-        st.write("**Archivo buscado:**", EXCEL_FILE)
-        st.write("**Archivos en directorio:**")
         try:
-            st.write(os.listdir(BASE_DIR))
-        except:
-            st.write("No se pudo listar el directorio")
+            url_sheet = st.secrets["gsheets"]["url"]
+            st.write("**Fuente de datos:** Google Sheets")
+            st.write("**URL configurada:**", url_sheet)
+            st.write("**URL de exportación:**", construir_url_exportacion(url_sheet))
+        except Exception:
+            st.write("No se pudo leer la configuración de secrets.toml")
