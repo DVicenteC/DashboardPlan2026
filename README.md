@@ -1,6 +1,6 @@
-# Dashboard Programación de Evaluaciones IST 2026
+# Dashboard Programación de Evaluaciones 2026
 
-Dashboard interactivo para la visualización y seguimiento de la programación de evaluaciones de Higiene Ocupacional 2026 del Instituto de Seguridad del Trabajo (IST).
+Dashboard interactivo para la visualización y seguimiento de la programación de evaluaciones
 
 ## Características
 
@@ -22,18 +22,7 @@ conda activate dash
 pip install -r requirements.txt
 ```
 
-## Configuración
-
-Crear el archivo `.streamlit/secrets.toml` con la URL de la hoja de Google Sheets:
-
-```toml
-[gsheets]
-url = "https://docs.google.com/spreadsheets/d/TU_SPREADSHEET_ID/edit?gid=TU_GID#gid=TU_GID"
-```
-
-> **Importante:** La hoja debe tener acceso "Cualquiera con el enlace puede ver".
-
-## Ejecución local
+## ConfiguraciónEjecución local
 
 ```bash
 streamlit run dashboard_programacion_2026_PRODUCCION.py
@@ -59,13 +48,13 @@ DashboardPlan2026/
 
 ## Stack tecnológico
 
-| Componente | Tecnología |
-|---|---|
-| Frontend | Streamlit 1.31.0 |
-| Datos | Google Sheets (CSV export) |
-| Motor en memoria | DuckDB 0.10.0 |
-| Procesamiento | Pandas 2.1.4 |
-| Visualización | Plotly 5.18.0 |
+| Componente       | Tecnología                |
+| ---------------- | -------------------------- |
+| Frontend         | Streamlit 1.31.0           |
+| Datos            | Google Sheets (CSV export) |
+| Motor en memoria | DuckDB 0.10.0              |
+| Procesamiento    | Pandas 2.1.4               |
+| Visualización   | Plotly 5.18.0              |
 
 ## Autor
 
