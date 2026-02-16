@@ -38,8 +38,78 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ============================================================================
-# CONFIGURACIÓN DE FUENTE DE DATOS (Google Sheets + DuckDB)
+# SISTEMA DE AUTENTICACIÓN
 # ============================================================================
+
+def check_password():
+    """Retorna True si el usuario ingresó las credenciales correctas."""
+
+    def password_entered():
+        """Revisa si las credenciales son correctas."""
+        if (
+            st.session_state["username"] == "70015580-3"
+            and st.session_state["password"] == "IST"
+        ):
+            st.session_state["password_correct"] = True
+            del st.session_state["password"]  # Eliminar contraseña de session_state
+            del st.session_state["username"]
+        else:
+            st.session_state["password_correct"] = False
+
+    if st.session_state.get("password_correct", False):
+        return True
+
+    # Página de login con estilo premium
+    st.markdown("""
+        <style>
+        .login-container {
+            max-width: 450px;
+            margin: 50px auto;
+            padding: 40px;
+            background-color: white;
+            border-radius: 20px;
+            box-shadow: 0 15px 35px rgba(0,0,0,0.1);
+            border: 1px solid #E0E0E0;
+        }
+        .login-header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .login-title {
+            color: #2E86AB;
+            font-size: 24px;
+            font-weight: bold;
+            margin-top: 10px;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.markdown('<div class="login-container">', unsafe_allow_html=True)
+        st.markdown('<div class="login-header">', unsafe_allow_html=True)
+        st.markdown('<h1>📊</h1>', unsafe_allow_html=True)
+        st.markdown('<div class="login-title">Acceso Programación HO 2026</div>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+        st.text_input("Usuario", key="username", placeholder="Ingrese su RUT/ID")
+        st.text_input("Contraseña", type="password", key="password", placeholder="••••••••")
+        
+        st.markdown("<br>", unsafe_allow_html=True)
+        if st.button("🚀 Ingresar al Dashboard", use_container_width=True, on_click=password_entered):
+            pass # on_click maneja la lógica
+
+        if "password_correct" in st.session_state and not st.session_state["password_correct"]:
+            st.error("❌ Credenciales incorrectas. Intente nuevamente.")
+        
+        st.markdown('<div style="text-align: center; margin-top: 20px; color: #888; font-size: 12px;">© 2026 IST - Especialidades Técnicas</div>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    return False
+
+# Solo continuar si está autenticado
+if not check_password():
+    st.stop()
 
 def construir_url_exportacion(url_sheet):
     """Construye la URL de exportación CSV a partir de la URL de Google Sheets"""
