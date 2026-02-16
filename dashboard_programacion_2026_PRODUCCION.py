@@ -12,6 +12,7 @@ import plotly.graph_objects as go
 from datetime import datetime
 import duckdb
 import re
+import io
 
 # Configuración de página
 st.set_page_config(
@@ -454,12 +455,16 @@ def mostrar_resumen_detallado(df_filtrado, protocolo_seleccionado, seccion='tab1
         
         st.dataframe(df_agrupado, use_container_width=True, height=400, hide_index=True)
         
-        csv = df_agrupado.to_csv(index=False).encode('utf-8-sig')
+        # Preparar Excel en memoria
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+            df_agrupado.to_excel(writer, index=False, sheet_name='Detalle_Plaguicidas')
+        
         st.download_button(
-            label="📥 Descargar Detalle en CSV",
-            data=csv,
-            file_name=f'detalle_plaguicidas_ct_{datetime.now().strftime("%Y%m%d")}.csv',
-            mime='text/csv',
+            label="📥 Descargar Detalle en Excel",
+            data=buffer.getvalue(),
+            file_name=f'detalle_plaguicidas_ct_{datetime.now().strftime("%Y%m%d")}.xlsx',
+            mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             key=f'download_btn_{seccion}'
         )
     else:
@@ -486,12 +491,16 @@ def mostrar_resumen_detallado(df_filtrado, protocolo_seleccionado, seccion='tab1
         
         st.dataframe(df_tabla, use_container_width=True, height=400, hide_index=True)
         
-        csv = df_tabla.to_csv(index=False).encode('utf-8-sig')
+        # Preparar Excel en memoria
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+            df_tabla.to_excel(writer, index=False, sheet_name='Detalle_Evaluaciones')
+            
         st.download_button(
-            label="📥 Descargar Detalle en CSV",
-            data=csv,
-            file_name=f'detalle_evaluaciones_{datetime.now().strftime("%Y%m%d")}.csv',
-            mime='text/csv',
+            label="📥 Descargar Detalle en Excel",
+            data=buffer.getvalue(),
+            file_name=f'detalle_evaluaciones_{datetime.now().strftime("%Y%m%d")}.xlsx',
+            mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             key=f'download_btn_{seccion}'
         )
 
