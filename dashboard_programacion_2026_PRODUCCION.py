@@ -163,10 +163,10 @@ def preparar_datos_eventos(df):
     columnas_base = ['fecha', 'tipo', 'Protocolo', 'Region Sucursal', 'Agente', 
                      'Nivel de riesgo', 'Comuna CT', 'NOMBRE SUCURSAL', 'Nombre empleador', 
                      'AnexoSUSESO', 'Identificador único (ID) centro de trabajo (CT)',
-                     'Gerencia - Cuentas Nacionales', 'Faena Codelco', 'Motivo de programación','Faena Marítimo - Portuaria']
+                     'Gerencia - Cuentas Nacionales', 'Faena Marítimo - Portuaria']
 
-    # Agregar columnas opcionales si existen
-    columnas_opcionales = ['Motivo de programación']
+    # Columnas opcionales si existen
+    columnas_opcionales = ['Motivo de programación', 'Faena Codelco']
     
     columnas_finales = columnas_base.copy()
     for col in columnas_opcionales:
@@ -450,7 +450,7 @@ def mostrar_resumen_detallado(df_filtrado, protocolo_seleccionado, seccion='tab1
         
         df_agrupado.columns = ['ID Centro de Trabajo', 'Fecha', 'Tipo', 'Nombre empleador', 
                                'Sucursal', 'Protocolo', 'Región', 'Comuna', 'Agentes Evaluados', 
-                               'Anexo SUSESO', 'Gerente', 'Cantidad Agentes']
+                               'Anexo SUSESO', 'Gerente', 'Marítimo Portuario', 'Cantidad Agentes']
         
         st.dataframe(df_agrupado, use_container_width=True, height=400, hide_index=True)
         
@@ -469,7 +469,7 @@ def mostrar_resumen_detallado(df_filtrado, protocolo_seleccionado, seccion='tab1
                             'Protocolo', 'Region Sucursal', 'Comuna CT', 'Nivel de riesgo', 'AnexoSUSESO', 'Gerencia - Cuentas Nacionales', 'Faena Marítimo - Portuaria']
         
         nombres_columnas = ['Fecha', 'Tipo', 'Nombre empleador', 'Sucursal', 'Agente', 
-                            'Protocolo', 'Región', 'Comuna', 'Nivel de Riesgo', 'Anexo SUSESO', 'Gerente']
+                            'Protocolo', 'Región', 'Comuna', 'Nivel de Riesgo', 'Anexo SUSESO', 'Gerente', 'Marítimo Portuario']
         
         if 'Motivo de programación' in df_filtrado.columns:
             columnas_detalle.append('Motivo de programación')
