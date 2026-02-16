@@ -508,8 +508,8 @@ def mostrar_resumen_detallado(df_filtrado, protocolo_seleccionado, seccion='tab1
 # INTERFAZ PRINCIPAL
 # ============================================================================
 
-st.title("📊 Dashboard de Programación de Evaluaciones de Higiene Ocupacional 2026")
-st.markdown("### IST Organismo de Seguridad y Salud del Trabajo")
+st.title("📊 Dashboard de Programación de Evaluaciones 2026")
+st.markdown("### IST Organismo de Seguridad y Salud del Trabajo - Higiene Ocupacional")
 st.markdown("---")
 
 # Cargar datos con manejo de errores
