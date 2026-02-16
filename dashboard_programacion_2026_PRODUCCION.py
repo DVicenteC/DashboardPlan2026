@@ -163,10 +163,10 @@ def preparar_datos_eventos(df):
     columnas_base = ['fecha', 'tipo', 'Protocolo', 'Region Sucursal', 'Agente', 
                      'Nivel de riesgo', 'Comuna CT', 'NOMBRE SUCURSAL', 'Nombre empleador', 
                      'AnexoSUSESO', 'Identificador único (ID) centro de trabajo (CT)',
-                     'Gerencia - Cuentas Nacionales']
-    
+                     'Gerencia - Cuentas Nacionales', 'Faena Codelco', 'Motivo de programación','Faena Marítimo - Portuaria']
+
     # Agregar columnas opcionales si existen
-    columnas_opcionales = ['Motivo de programación', 'Faena Codelco']
+    columnas_opcionales = ['Motivo de programación']
     
     columnas_finales = columnas_base.copy()
     for col in columnas_opcionales:
@@ -191,6 +191,9 @@ def preparar_datos_eventos(df):
     if 'Faena Codelco' in df_eventos.columns:
         df_eventos['Faena Codelco'] = df_eventos['Faena Codelco'].fillna('Sin Faena').astype(str)
     
+    if 'Faena Marítimo - Portuaria' in df_eventos.columns:
+        df_eventos['Faena Marítimo - Portuaria'] = df_eventos['Faena Marítimo - Portuaria'].fillna('Sin Información').astype(str)
+    
     if 'Motivo de programación' in df_eventos.columns:
         df_eventos['Motivo de programación'] = df_eventos['Motivo de programación'].fillna('Sin Motivo').astype(str)
     
@@ -214,7 +217,7 @@ def preparar_datos_eventos(df):
     
     return df_eventos
 
-def aplicar_filtros(df, anexo_suseso, protocolo, region, tipo, mes, faena_codelco, gerente):
+def aplicar_filtros(df, anexo_suseso, protocolo, region, tipo, mes, faena_codelco, gerente, maritimo_portuario):
     """Aplica los filtros seleccionados - VERSIÓN CORREGIDA"""
     df_filtrado = df.copy()
     
@@ -225,6 +228,9 @@ def aplicar_filtros(df, anexo_suseso, protocolo, region, tipo, mes, faena_codelc
     if gerente != 'Todos':
         df_filtrado = df_filtrado[df_filtrado['Gerencia - Cuentas Nacionales'] == gerente].copy()
     
+    if maritimo_portuario != 'Todos' and 'Faena Marítimo - Portuaria' in df_filtrado.columns:
+        df_filtrado = df_filtrado[df_filtrado['Faena Marítimo - Portuaria'] == maritimo_portuario].copy()
+
     if protocolo != 'Todos':
         df_filtrado = df_filtrado[df_filtrado['Protocolo'] == protocolo].copy()
     
@@ -435,7 +441,8 @@ def mostrar_resumen_detallado(df_filtrado, protocolo_seleccionado, seccion='tab1
             'Comuna CT': 'first',
             'Agente': lambda x: ', '.join(sorted(set(str(a) for a in x if str(a) != 'Sin Agente'))),
             'AnexoSUSESO': 'first',
-            'Gerencia - Cuentas Nacionales': 'first'
+            'Gerencia - Cuentas Nacionales': 'first',
+            'Faena Marítimo - Portuaria': 'first'
         }).reset_index()
         
         df_agrupado['fecha'] = pd.to_datetime(df_agrupado['fecha']).dt.strftime('%d-%m-%Y')
@@ -459,7 +466,7 @@ def mostrar_resumen_detallado(df_filtrado, protocolo_seleccionado, seccion='tab1
         st.markdown("#### Listado Completo de Evaluaciones")
         
         columnas_detalle = ['fecha', 'tipo', 'Nombre empleador', 'NOMBRE SUCURSAL', 'Agente', 
-                            'Protocolo', 'Region Sucursal', 'Comuna CT', 'Nivel de riesgo', 'AnexoSUSESO', 'Gerencia - Cuentas Nacionales']
+                            'Protocolo', 'Region Sucursal', 'Comuna CT', 'Nivel de riesgo', 'AnexoSUSESO', 'Gerencia - Cuentas Nacionales', 'Faena Marítimo - Portuaria']
         
         nombres_columnas = ['Fecha', 'Tipo', 'Nombre empleador', 'Sucursal', 'Agente', 
                             'Protocolo', 'Región', 'Comuna', 'Nivel de Riesgo', 'Anexo SUSESO', 'Gerente']
@@ -556,11 +563,20 @@ try:
     else:
         faena_codelco = 'Todos'
     
+    if 'Faena Marítimo - Portuaria' in df_eventos.columns:
+        maritimo_portuario_unicos = sorted([x for x in df_eventos['Faena Marítimo - Portuaria'].unique() if x != 'Sin Información'])
+        maritimo_portuario = st.sidebar.selectbox(
+            "Faena Marítimo - Portuaria",
+            ['Todos'] + maritimo_portuario_unicos
+        )
+    else:
+        maritimo_portuario = 'Todos'
+    
     if st.sidebar.button("🔄 Resetear Filtros"):
         st.rerun()
     
     # Aplicar filtros
-    df_filtrado = aplicar_filtros(df_eventos, anexo_suseso, protocolo, region, tipo, mes, faena_codelco, gerente)
+    df_filtrado = aplicar_filtros(df_eventos, anexo_suseso, protocolo, region, tipo, mes, faena_codelco, gerente, maritimo_portuario)
     
     # Métricas
     col1, col2, col3, col4 = st.columns(4)
