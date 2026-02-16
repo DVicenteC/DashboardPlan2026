@@ -520,7 +520,7 @@ try:
     # Excluir valores 'Sin Información'
     anexos_unicos = sorted([x for x in df_eventos['AnexoSUSESO'].unique() if x != 'Sin Información'])
     anexo_suseso = st.sidebar.selectbox(
-        "Anexo 4 o 5 (Ministerial o No Ministerial)",
+        "Anexo 4 - Protocolos Ministeriales o Anexo 5 No Ministerial",
         ['Todos'] + anexos_unicos
     )
     
