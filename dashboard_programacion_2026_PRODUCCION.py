@@ -162,7 +162,8 @@ def preparar_datos_eventos(df):
     # Columnas base que siempre deben existir
     columnas_base = ['fecha', 'tipo', 'Protocolo', 'Region Sucursal', 'Agente', 
                      'Nivel de riesgo', 'Comuna CT', 'NOMBRE SUCURSAL', 'Nombre empleador', 
-                     'AnexoSUSESO', 'Identificador único (ID) centro de trabajo (CT)']
+                     'AnexoSUSESO', 'Identificador único (ID) centro de trabajo (CT)',
+                     'Gerencia - Cuentas Nacionales']
     
     # Agregar columnas opcionales si existen
     columnas_opcionales = ['Motivo de programación', 'Faena Codelco']
@@ -184,6 +185,7 @@ def preparar_datos_eventos(df):
     df_eventos['Nivel de riesgo'] = df_eventos['Nivel de riesgo'].fillna('Sin Nivel').astype(str)
     df_eventos['NOMBRE SUCURSAL'] = df_eventos['NOMBRE SUCURSAL'].fillna('Sin Sucursal').astype(str)
     df_eventos['Nombre empleador'] = df_eventos['Nombre empleador'].fillna('Sin Empleador').astype(str)
+    df_eventos['Gerencia - Cuentas Nacionales'] = df_eventos['Gerencia - Cuentas Nacionales'].fillna('Sin Gerente').astype(str)
     
     # Convertir columnas opcionales a string si existen
     if 'Faena Codelco' in df_eventos.columns:
@@ -212,13 +214,16 @@ def preparar_datos_eventos(df):
     
     return df_eventos
 
-def aplicar_filtros(df, anexo_suseso, protocolo, region, tipo, mes, faena_codelco):
+def aplicar_filtros(df, anexo_suseso, protocolo, region, tipo, mes, faena_codelco, gerente):
     """Aplica los filtros seleccionados - VERSIÓN CORREGIDA"""
     df_filtrado = df.copy()
     
     # FIX CRÍTICO: Usar .copy() después de cada filtro
     if anexo_suseso != 'Todos':
         df_filtrado = df_filtrado[df_filtrado['AnexoSUSESO'] == anexo_suseso].copy()
+    
+    if gerente != 'Todos':
+        df_filtrado = df_filtrado[df_filtrado['Gerencia - Cuentas Nacionales'] == gerente].copy()
     
     if protocolo != 'Todos':
         df_filtrado = df_filtrado[df_filtrado['Protocolo'] == protocolo].copy()
@@ -429,7 +434,8 @@ def mostrar_resumen_detallado(df_filtrado, protocolo_seleccionado, seccion='tab1
             'Region Sucursal': 'first',
             'Comuna CT': 'first',
             'Agente': lambda x: ', '.join(sorted(set(str(a) for a in x if str(a) != 'Sin Agente'))),
-            'AnexoSUSESO': 'first'
+            'AnexoSUSESO': 'first',
+            'Gerencia - Cuentas Nacionales': 'first'
         }).reset_index()
         
         df_agrupado['fecha'] = pd.to_datetime(df_agrupado['fecha']).dt.strftime('%d-%m-%Y')
@@ -437,7 +443,7 @@ def mostrar_resumen_detallado(df_filtrado, protocolo_seleccionado, seccion='tab1
         
         df_agrupado.columns = ['ID Centro de Trabajo', 'Fecha', 'Tipo', 'Nombre empleador', 
                                'Sucursal', 'Protocolo', 'Región', 'Comuna', 'Agentes Evaluados', 
-                               'Anexo SUSESO', 'Cantidad Agentes']
+                               'Anexo SUSESO', 'Gerente', 'Cantidad Agentes']
         
         st.dataframe(df_agrupado, use_container_width=True, height=400, hide_index=True)
         
@@ -453,10 +459,10 @@ def mostrar_resumen_detallado(df_filtrado, protocolo_seleccionado, seccion='tab1
         st.markdown("#### Listado Completo de Evaluaciones")
         
         columnas_detalle = ['fecha', 'tipo', 'Nombre empleador', 'NOMBRE SUCURSAL', 'Agente', 
-                            'Protocolo', 'Region Sucursal', 'Comuna CT', 'Nivel de riesgo', 'AnexoSUSESO']
+                            'Protocolo', 'Region Sucursal', 'Comuna CT', 'Nivel de riesgo', 'AnexoSUSESO', 'Gerencia - Cuentas Nacionales']
         
         nombres_columnas = ['Fecha', 'Tipo', 'Nombre empleador', 'Sucursal', 'Agente', 
-                            'Protocolo', 'Región', 'Comuna', 'Nivel de Riesgo', 'Anexo SUSESO']
+                            'Protocolo', 'Región', 'Comuna', 'Nivel de Riesgo', 'Anexo SUSESO', 'Gerente']
         
         if 'Motivo de programación' in df_filtrado.columns:
             columnas_detalle.append('Motivo de programación')
@@ -522,6 +528,12 @@ try:
         "Región",
         ['Todas'] + regiones_unicas
     )
+
+    gerentes_unicos = sorted([x for x in df_eventos['Gerencia - Cuentas Nacionales'].unique() if x != 'Sin Gerente'])
+    gerente = st.sidebar.selectbox(
+        "Gerencia - Cuentas Nacionales",
+        ['Todos'] + gerentes_unicos
+    )
     
     tipo = st.sidebar.selectbox(
         "Tipo de Evaluación",
@@ -548,7 +560,7 @@ try:
         st.rerun()
     
     # Aplicar filtros
-    df_filtrado = aplicar_filtros(df_eventos, anexo_suseso, protocolo, region, tipo, mes, faena_codelco)
+    df_filtrado = aplicar_filtros(df_eventos, anexo_suseso, protocolo, region, tipo, mes, faena_codelco, gerente)
     
     # Métricas
     col1, col2, col3, col4 = st.columns(4)
