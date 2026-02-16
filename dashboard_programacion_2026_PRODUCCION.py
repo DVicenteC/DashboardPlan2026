@@ -526,7 +526,7 @@ try:
     
     protocolos_unicos = sorted([x for x in df_eventos['Protocolo'].unique() if x != 'Sin Protocolo'])
     protocolo = st.sidebar.selectbox(
-        "Protocolo",
+        "Protocolo o Programa",
         ['Todos'] + protocolos_unicos
     )
     
