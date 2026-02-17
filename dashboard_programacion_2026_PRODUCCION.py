@@ -232,7 +232,7 @@ def preparar_datos_eventos(df):
     
     # Columnas base que siempre deben existir
     columnas_base = ['fecha', 'tipo', 'Protocolo', 'Region Sucursal', 'Agente', 
-                     'Nivel de riesgo', 'Comuna CT', 'NOMBRE SUCURSAL', 'Nombre empleador', 
+                     'Nivel de riesgo', 'Comuna CT', 'NOMBRE SUCURSAL', 'Rut Empleador o Rut trabajador(a)','Nombre empleador', 
                      'AnexoSUSESO', 'Identificador único (ID) centro de trabajo (CT)',
                      'Gerencia - Cuentas Nacionales', 'Faena Marítimo - Portuaria']
 
@@ -540,10 +540,10 @@ def mostrar_resumen_detallado(df_filtrado, protocolo_seleccionado, seccion='tab1
     else:
         st.markdown("#### Listado Completo de Evaluaciones")
         
-        columnas_detalle = ['fecha', 'tipo', 'Nombre empleador', 'NOMBRE SUCURSAL', 'Agente', 
+        columnas_detalle = ['fecha', 'tipo', 'Rut Empleador o Rut trabajador(a)', 'Nombre empleador','Identificador único (ID) centro de trabajo (CT)', 'NOMBRE SUCURSAL', 'Agente', 
                             'Protocolo', 'Region Sucursal', 'Comuna CT', 'Nivel de riesgo', 'AnexoSUSESO', 'Gerencia - Cuentas Nacionales', 'Faena Marítimo - Portuaria']
         
-        nombres_columnas = ['Fecha', 'Tipo', 'Nombre empleador', 'Sucursal', 'Agente', 
+        nombres_columnas = ['Fecha', 'Tipo', 'Rut Empleador o Rut trabajador(a)', 'Nombre empleador','Identificador único (ID) centro de trabajo (CT)', 'Sucursal', 'Agente', 
                             'Protocolo', 'Región', 'Comuna', 'Nivel de Riesgo', 'Anexo SUSESO', 'Gerente', 'Marítimo Portuario']
         
         if 'Motivo de programación' in df_filtrado.columns:
