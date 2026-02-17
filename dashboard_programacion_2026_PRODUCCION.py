@@ -540,11 +540,11 @@ def mostrar_resumen_detallado(df_filtrado, protocolo_seleccionado, seccion='tab1
     else:
         st.markdown("#### Listado Completo de Evaluaciones")
         
-        columnas_detalle = ['fecha', 'tipo', 'Rut Empleador o Rut trabajador(a)', 'Nombre empleador','Identificador único (ID) centro de trabajo (CT)', 'NOMBRE SUCURSAL', 'Agente', 
-                            'Protocolo', 'Region Sucursal', 'Comuna CT', 'Nivel de riesgo', 'AnexoSUSESO', 'Gerencia - Cuentas Nacionales', 'Faena Marítimo - Portuaria']
+        columnas_detalle = ['fecha', 'tipo','Gerencia - Cuentas Nacionales','Region Sucursal', 'Rut Empleador o Rut trabajador(a)', 'Nombre empleador','Identificador único (ID) centro de trabajo (CT)', 'NOMBRE SUCURSAL', 'Agente', 
+                            'Protocolo',  'Comuna CT', 'Nivel de riesgo', 'AnexoSUSESO', 'Faena Marítimo - Portuaria']
         
-        nombres_columnas = ['Fecha', 'Tipo', 'Rut Empleador o Rut trabajador(a)', 'Nombre empleador','Identificador único (ID) centro de trabajo (CT)', 'Sucursal', 'Agente', 
-                            'Protocolo', 'Región', 'Comuna', 'Nivel de Riesgo', 'Anexo SUSESO', 'Gerente', 'Marítimo Portuario']
+        nombres_columnas = ['Fecha', 'Tipo', 'Gerente','Región', 'Rut Empleador o Rut trabajador(a)', 'Nombre empleador','Identificador único (ID) centro de trabajo (CT)', 'Sucursal', 'Agente', 
+                            'Protocolo', 'Comuna', 'Nivel de Riesgo', 'Anexo SUSESO',  'Marítimo Portuario']
         
         if 'Motivo de programación' in df_filtrado.columns:
             columnas_detalle.append('Motivo de programación')
