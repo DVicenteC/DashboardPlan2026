@@ -47,8 +47,8 @@ def check_password():
     def password_entered():
         """Revisa si las credenciales son correctas."""
         if (
-            st.session_state["username"] == "70015580-3"
-            and st.session_state["password"] == "IST"
+            st.session_state["username"] == st.secrets["credentials"]["username"]
+            and st.session_state["password"] == st.secrets["credentials"]["password"]
         ):
             st.session_state["password_correct"] = True
             del st.session_state["password"]  # Eliminar contraseña de session_state
