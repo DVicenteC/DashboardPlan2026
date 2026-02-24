@@ -231,10 +231,10 @@ def preparar_datos_eventos(df):
     cuanti['fecha'] = cuanti['Fecha de Evaluación Cuantitativa 2026']
     
     # Columnas base que siempre deben existir
-    columnas_base = ['fecha', 'tipo', 'Protocolo', 'Region Sucursal', 'Agente', 
-                     'Nivel de riesgo', 'Comuna CT', 'NOMBRE SUCURSAL', 'Rut Empleador o Rut trabajador(a)','Nombre empleador', 
+    columnas_base = ['fecha', 'tipo', 'Protocolo', 'Region Sucursal', 'Agente',
+                     'Nivel de riesgo', 'Comuna CT', 'NOMBRE SUCURSAL', 'Rut Empleador o Rut trabajador(a)','Nombre empleador',
                      'AnexoSUSESO', 'Identificador único (ID) centro de trabajo (CT)',
-                     'Gerencia - Cuentas Nacionales', 'Faena Marítimo - Portuaria']
+                     'Gerencia - Cuentas Nacionales', 'Faena Marítimo - Portuaria', 'Holding']
 
     # Columnas opcionales si existen
     columnas_opcionales = ['Motivo de programación', 'Faena Codelco']
@@ -257,7 +257,8 @@ def preparar_datos_eventos(df):
     df_eventos['NOMBRE SUCURSAL'] = df_eventos['NOMBRE SUCURSAL'].fillna('Sin Sucursal').astype(str)
     df_eventos['Nombre empleador'] = df_eventos['Nombre empleador'].fillna('Sin Empleador').astype(str)
     df_eventos['Gerencia - Cuentas Nacionales'] = df_eventos['Gerencia - Cuentas Nacionales'].fillna('Sin Gerente').astype(str)
-    
+    df_eventos['Holding'] = df_eventos['Holding'].fillna('Sin Holding').astype(str)
+
     # Convertir columnas opcionales a string si existen
     if 'Faena Codelco' in df_eventos.columns:
         df_eventos['Faena Codelco'] = df_eventos['Faena Codelco'].fillna('Sin Faena').astype(str)
@@ -288,16 +289,19 @@ def preparar_datos_eventos(df):
     
     return df_eventos
 
-def aplicar_filtros(df, anexo_suseso, protocolo, region, tipo, mes, faena_codelco, gerente, maritimo_portuario):
+def aplicar_filtros(df, anexo_suseso, protocolo, region, tipo, mes, faena_codelco, gerente, maritimo_portuario, holding):
     """Aplica los filtros seleccionados - VERSIÓN CORREGIDA"""
     df_filtrado = df.copy()
-    
+
     # FIX CRÍTICO: Usar .copy() después de cada filtro
     if anexo_suseso != 'Todos':
         df_filtrado = df_filtrado[df_filtrado['AnexoSUSESO'] == anexo_suseso].copy()
-    
+
     if gerente != 'Todos':
         df_filtrado = df_filtrado[df_filtrado['Gerencia - Cuentas Nacionales'] == gerente].copy()
+
+    if holding != 'Todos':
+        df_filtrado = df_filtrado[df_filtrado['Holding'] == holding].copy()
     
     if maritimo_portuario != 'Todos' and 'Faena Marítimo - Portuaria' in df_filtrado.columns:
         df_filtrado = df_filtrado[df_filtrado['Faena Marítimo - Portuaria'] == maritimo_portuario].copy()
@@ -620,7 +624,13 @@ try:
         "Gerencia - Cuentas Nacionales",
         ['Todos'] + gerentes_unicos
     )
-    
+
+    holdings_unicos = sorted([x for x in df_eventos['Holding'].unique() if x != 'Sin Holding'])
+    holding = st.sidebar.selectbox(
+        "Holding",
+        ['Todos'] + holdings_unicos
+    )
+
     tipo = st.sidebar.selectbox(
         "Tipo de Evaluación",
         ['Todas', 'Cualitativa', 'Cuantitativa']
@@ -655,7 +665,7 @@ try:
         st.rerun()
     
     # Aplicar filtros
-    df_filtrado = aplicar_filtros(df_eventos, anexo_suseso, protocolo, region, tipo, mes, faena_codelco, gerente, maritimo_portuario)
+    df_filtrado = aplicar_filtros(df_eventos, anexo_suseso, protocolo, region, tipo, mes, faena_codelco, gerente, maritimo_portuario, holding)
     
     # Métricas
     col1, col2, col3, col4 = st.columns(4)
