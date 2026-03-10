@@ -217,6 +217,56 @@ def cargar_datos():
         st.error(f"❌ Error al cargar datos desde Google Sheets: {str(e)}")
         st.stop()
 
+
+def normalizar_columnas_seguimiento(df):
+    """Normaliza columnas del CSV seguimiento (Google Sheets quita las tildes)."""
+    mapeo = {
+        'Identificador unico (ID) centro de trabajo (CT)': 'Identificador único (ID) centro de trabajo (CT)',
+        'Fecha de Evaluacion Cualitativa 2026': 'Fecha de Evaluación Cualitativa 2026',
+        'Fecha de Evaluacion Cuantitativa 2026': 'Fecha de Evaluación Cuantitativa 2026',
+        'Fecha de Evaluacion Vigilancia de Salud 2026': 'Fecha de Evaluación Vigilancia de Salud 2026',
+        'Numero de trabajadores evaluados 2026 Hombres': 'Número de trabajadores evaluados 2026 Hombres',
+        'Numero de trabajadores evaluados 2026 Mujeres': 'Número de trabajadores evaluados 2026 Mujeres',
+        'N de Trabajadores CT': 'N° de Trabajadores CT',
+        'Grupo Act. Economica': 'Grupo Act. Económica',
+        'Protocolo': 'Protocolo_SUSESO_Interno', # Oculto al usuario
+        'Codigo Europeo': 'CODIGO_EUROPEO_Interno', # Oculto al usuario
+        'Programa': 'Protocolo', # Usar nombre legible como 'Protocolo'
+    }
+    return df.rename(columns=mapeo)
+
+
+@st.cache_data(ttl=300)
+def cargar_datos_seguimiento():
+    """Carga datos de seguimiento desde la hoja SeguimientoHO del Google Sheet.
+    Retorna DataFrame vacío si la hoja no existe o no tiene datos aún.
+    No detiene la app (soft-fail) para no bloquear la vista de programación."""
+    try:
+        url_seg = st.secrets["gsheets"].get("seguimiento")
+        if not url_seg:
+            return pd.DataFrame()
+        match_id = re.search(r'/d/([a-zA-Z0-9_-]+)', url_seg)
+        if not match_id:
+            return pd.DataFrame()
+        sid = match_id.group(1)
+        match_gid = re.search(r'gid=(\d+)', url_seg)
+        gid = match_gid.group(1) if match_gid else '0'
+        export_url = f"https://docs.google.com/spreadsheets/d/{sid}/export?format=csv&gid={gid}"
+        df = pd.read_csv(export_url, dtype=str)
+        if df.empty or len(df.columns) < 3:
+            return pd.DataFrame()
+        df.columns = df.columns.str.strip()
+        df = normalizar_columnas_seguimiento(df)
+        for col in ['Fecha de Evaluación Cualitativa 2026',
+                    'Fecha de Evaluación Cuantitativa 2026',
+                    'Fecha de Evaluación Vigilancia de Salud 2026']:
+            if col in df.columns:
+                df[col] = parsear_fecha_flexible(df[col])
+        return df
+    except Exception:
+        return pd.DataFrame()
+
+
 @st.cache_data
 def preparar_datos_eventos(df):
     """Prepara datos en formato largo para visualización - VERSIÓN CORREGIDA"""
@@ -290,29 +340,38 @@ def preparar_datos_eventos(df):
     return df_eventos
 
 def aplicar_filtros(df, anexo_suseso, protocolo, region, tipo, mes, faena_codelco, gerente, maritimo_portuario, holding):
-    """Aplica los filtros seleccionados - VERSIÓN CORREGIDA"""
+    """Aplica los filtros seleccionados de forma flexible para Programación y Seguimiento"""
+    if df.empty:
+        return df
+        
     df_filtrado = df.copy()
 
-    # FIX CRÍTICO: Usar .copy() después de cada filtro
-    if anexo_suseso != 'Todos':
+    # Filtro Anexo
+    if anexo_suseso != 'Todos' and 'AnexoSUSESO' in df_filtrado.columns:
         df_filtrado = df_filtrado[df_filtrado['AnexoSUSESO'] == anexo_suseso].copy()
 
+    # Filtro Gerente/Gerencia
     if gerente != 'Todos':
-        df_filtrado = df_filtrado[df_filtrado['Gerencia - Cuentas Nacionales'] == gerente].copy()
+        col_ger = 'Gerencia - Cuentas Nacionales' if 'Gerencia - Cuentas Nacionales' in df_filtrado.columns else 'Gerencia'
+        if col_ger in df_filtrado.columns:
+            df_filtrado = df_filtrado[df_filtrado[col_ger] == gerente].copy()
 
-    if holding != 'Todos':
+    if holding != 'Todos' and 'Holding' in df_filtrado.columns:
         df_filtrado = df_filtrado[df_filtrado['Holding'] == holding].copy()
     
     if maritimo_portuario != 'Todos' and 'Faena Marítimo - Portuaria' in df_filtrado.columns:
         df_filtrado = df_filtrado[df_filtrado['Faena Marítimo - Portuaria'] == maritimo_portuario].copy()
 
+    # Filtro Protocolo/Programa
     if protocolo != 'Todos':
-        df_filtrado = df_filtrado[df_filtrado['Protocolo'] == protocolo].copy()
+        # Priorizar la columna de texto 'Protocolo' (antiguo 'Programa')
+        if 'Protocolo' in df_filtrado.columns:
+            df_filtrado = df_filtrado[df_filtrado['Protocolo'] == protocolo].copy()
     
-    if region != 'Todas':
+    if region != 'Todas' and 'Region Sucursal' in df_filtrado.columns:
         df_filtrado = df_filtrado[df_filtrado['Region Sucursal'] == region].copy()
     
-    if tipo != 'Todas':
+    if tipo != 'Todas' and 'tipo' in df_filtrado.columns:
         df_filtrado = df_filtrado[df_filtrado['tipo'] == tipo].copy()
     
     if mes != 'Todos':
@@ -322,10 +381,23 @@ def aplicar_filtros(df, anexo_suseso, protocolo, region, tipo, mes, faena_codelc
             'Septiembre': 9, 'Octubre': 10, 'Noviembre': 11, 'Diciembre': 12
         }
         mes_num = meses_es_a_num[mes]
-        df_filtrado = df_filtrado[df_filtrado['mes'] == mes_num].copy()
+        # En df_seg no hay 'mes' directo, debemos extraerlo de las fechas si es necesario
+        if 'mes' in df_filtrado.columns:
+            df_filtrado = df_filtrado[df_filtrado['mes'] == mes_num].copy()
+        else:
+            # Para df_seg, filtramos si alguna de las fechas de evaluación o programación cae en ese mes
+            cols_fecha = [c for c in df_filtrado.columns if 'Fecha' in c]
+            if cols_fecha:
+                mask = pd.Series(False, index=df_filtrado.index)
+                for col_f in cols_fecha:
+                    if pd.api.types.is_datetime64_any_dtype(df_filtrado[col_f]):
+                        mask |= (df_filtrado[col_f].dt.month == mes_num)
+                df_filtrado = df_filtrado[mask].copy()
     
-    if faena_codelco != 'Todos' and 'Faena Codelco' in df_filtrado.columns:
-        df_filtrado = df_filtrado[df_filtrado['Faena Codelco'] == faena_codelco].copy()
+    if faena_codelco != 'Todos':
+        col_faena = 'Faena Codelco' if 'Faena Codelco' in df_filtrado.columns else None
+        if col_faena:
+            df_filtrado = df_filtrado[df_filtrado[col_faena] == faena_codelco].copy()
     
     return df_filtrado
 
@@ -582,7 +654,7 @@ def mostrar_resumen_detallado(df_filtrado, protocolo_seleccionado, seccion='tab1
 # INTERFAZ PRINCIPAL
 # ============================================================================
 
-st.title("📊 Dashboard de Programación de Evaluaciones 2026")
+st.title("📊 Dashboard HO 2026 — Programación y Seguimiento")
 st.markdown("### IST Organismo de Seguridad y Salud del Trabajo - Higiene Ocupacional")
 st.markdown("---")
 
@@ -664,9 +736,26 @@ try:
     if st.sidebar.button("🔄 Resetear Filtros"):
         st.rerun()
     
-    # Aplicar filtros
+    # Aplicar filtros a ambos DataFrames
     df_filtrado = aplicar_filtros(df_eventos, anexo_suseso, protocolo, region, tipo, mes, faena_codelco, gerente, maritimo_portuario, holding)
     
+    # Cargar datos de seguimiento (soft-fail)
+    df_seg_raw = cargar_datos_seguimiento()
+    
+    # Asegurar que df_seg tenga 'Faena Codelco' para que el filtro lateral funcione
+    if not df_seg_raw.empty and 'Faena Codelco' not in df_seg_raw.columns:
+        # Intentar traer Faena Codelco desde df_eventos usando el ID-CT
+        if 'Faena Codelco' in df_eventos.columns:
+            mapeo_faena = df_eventos[['Identificador único (ID) centro de trabajo (CT)', 'Faena Codelco']].drop_duplicates().copy()
+            df_seg_raw = df_seg_raw.merge(
+                mapeo_faena, 
+                on='Identificador único (ID) centro de trabajo (CT)', 
+                how='left'
+            )
+
+    # Aplicar los MISMOS filtros laterales a Seguimiento (si hay datos)
+    df_seg = aplicar_filtros(df_seg_raw, anexo_suseso, protocolo, region, tipo, mes, faena_codelco, gerente, maritimo_portuario, holding) if not df_seg_raw.empty else pd.DataFrame()
+
     # Métricas
     col1, col2, col3, col4 = st.columns(4)
     
@@ -700,9 +789,12 @@ try:
     
     st.markdown("---")
     
-    # Tabs
-    tab1, tab2, tab3 = st.tabs(["📊 Resumen Mensual", "📈 Top Protocolos", "🔍 Detalle Completo"])
-    
+    # Tabs — Programación (1-3) + Seguimiento (4-6)
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+        "📊 Resumen Mensual", "📈 Top Protocolos", "🔍 Detalle Programación",
+        "📋 Estado Seguimiento", "📈 Progreso Mensual", "🏥 Vigilancia de Salud"
+    ])
+
     with tab1:
         fig_barras = grafico_barras_mensuales(df_filtrado, protocolo)
         if fig_barras:
@@ -711,7 +803,7 @@ try:
                 mostrar_resumen_detallado(df_filtrado, protocolo, seccion='tab1')
         else:
             st.warning("No hay datos para mostrar con los filtros seleccionados")
-    
+
     with tab2:
         fig_protocolos = grafico_top_protocolos(df_filtrado)
         if fig_protocolos:
@@ -720,10 +812,173 @@ try:
                 mostrar_resumen_detallado(df_filtrado, protocolo, seccion='tab2')
         else:
             st.warning("No hay datos para mostrar con los filtros seleccionados")
-    
+
     with tab3:
         mostrar_resumen_detallado(df_filtrado, protocolo, seccion='tab3')
-    
+
+    # ── TABS DE SEGUIMIENTO ──────────────────────────────────────────────────
+
+    with tab4:
+        if df_seg.empty:
+            if df_seg_raw.empty:
+                st.info(
+                    "📋 La hoja **SeguimientoHO** del Google Sheet aún no tiene datos.\n\n"
+                    "Ejecuta el script mensual (`procesador_seguimiento_HO_2026.py`) y pega "
+                    "el consolidado en esa hoja para activar este panel."
+                )
+            else:
+                st.warning("⚠️ No hay datos de seguimiento que coincidan con los filtros seleccionados en la barra lateral.")
+        else:
+            st.markdown("#### Estado de Evaluaciones — Seguimiento HO 2026")
+            dfs = df_seg.copy()
+            
+            total_seg = len(dfs)
+            real_cuali = dfs['Estado Cualitativa'].str.startswith('Realizada', na=False).sum() if 'Estado Cualitativa' in dfs.columns else 0
+            real_cuanti = dfs['Estado Cuantitativa'].str.startswith('Realizada', na=False).sum() if 'Estado Cuantitativa' in dfs.columns else 0
+            pend_atr = (dfs['Estado Cualitativa'] == 'Pendiente atrasada').sum() if 'Estado Cualitativa' in dfs.columns else 0
+            
+            # Cálculo de Avance General (Realizado / Programado)
+            # Para Plaguicidas, usamos CT únicos si el filtro está activo o si detectamos que son Plaguicidas
+            es_plag_seg = any('PLAGUICIDAS' in str(p).upper() for p in dfs['Programa'].unique()) if 'Programa' in dfs.columns else False
+            
+            if es_plag_seg:
+                prog_total = dfs['Identificador único (ID) centro de trabajo (CT)'].nunique()
+                real_total = dfs[dfs['Estado Cualitativa'].str.startswith('Realizada', na=False)]['Identificador único (ID) centro de trabajo (CT)'].nunique()
+            else:
+                prog_total = total_seg
+                real_total = real_cuali # Usamos cualitativa como base de 'realizado' general
+            
+            pct_avance = round(real_total / prog_total * 100, 1) if prog_total > 0 else 0
+            
+            st.markdown(f"### 📈 Avance General 2026: {pct_avance}%")
+            st.progress(pct_avance / 100)
+            
+            mc1, mc2, mc3, mc4 = st.columns(4)
+            mc1.metric("Programación Total", f"{prog_total:,}")
+            mc2.metric("Avance Realizado", f"{real_total:,}", f"{pct_avance}%")
+            mc3.metric("Pendientes Atrasadas", f"{pend_atr:,}", delta_color="inverse")
+            mc4.metric("Realizadas Cuanti.", f"{real_cuanti:,}")
+
+            st.markdown("---")
+            COLOR_ESTADO = {
+                'Realizada en fecha': '#27AE60',
+                'Realizada antes de fecha': '#82E0AA',
+                'Realizada después de fecha': '#F39C12',
+                'Realizada fuera de programa': '#E67E22',
+                'Pendiente atrasada': '#E74C3C',
+                'Pendiente no atrasada': '#85C1E9',
+                'Sin estado': '#BDC3C7',
+            }
+            col_c1, col_c2 = st.columns(2)
+            if 'Estado Cualitativa' in dfs.columns:
+                with col_c1:
+                    # Filtrar nulos para no mostrar "Sin estado"
+                    e_cuali = dfs[dfs['Estado Cualitativa'].notna()]
+                    cnt_c = e_cuali['Estado Cualitativa'].value_counts().reset_index()
+                    cnt_c.columns = ['Estado', 'Cantidad']
+                    fig_e1 = px.bar(cnt_c, x='Estado', y='Cantidad', color='Estado',
+                                    color_discrete_map=COLOR_ESTADO, height=350,
+                                    title='Estado Cualitativa')
+                    fig_e1.update_layout(showlegend=False, xaxis_tickangle=-30)
+                    st.plotly_chart(fig_e1, use_container_width=True)
+            if 'Estado Cuantitativa' in dfs.columns:
+                with col_c2:
+                    # Filtrar nulos para no mostrar "Sin estado"
+                    e_cuanti = dfs[dfs['Estado Cuantitativa'].notna()]
+                    cnt_q = e_cuanti['Estado Cuantitativa'].value_counts().reset_index()
+                    cnt_q.columns = ['Estado', 'Cantidad']
+                    fig_e2 = px.bar(cnt_q, x='Estado', y='Cantidad', color='Estado',
+                                    color_discrete_map=COLOR_ESTADO, height=350,
+                                    title='Estado Cuantitativa')
+                    fig_e2.update_layout(showlegend=False, xaxis_tickangle=-30)
+                    st.plotly_chart(fig_e2, use_container_width=True)
+
+            with st.expander("📋 Tabla de estado por Región", expanded=False):
+                if 'Estado Cualitativa' in dfs.columns and 'Region Sucursal' in dfs.columns:
+                    pivot = dfs.groupby(['Region Sucursal', 'Estado Cualitativa']).size().unstack(fill_value=0)
+                    st.dataframe(pivot, use_container_width=True)
+
+            with st.expander("🔍 Ver Detalle de Seguimiento", expanded=False):
+                # Columnas a mostrar en el detalle de seguimiento (Solo texto descriptivo)
+                cols_seg = ['Region Sucursal', 'Nombre Empleador', 
+                            'Identificador único (ID) centro de trabajo (CT)', 
+                            'Protocolo', 'Agente', # Nombres legibles
+                            'Estado Cualitativa', 'Fecha de Evaluación Cualitativa 2026',
+                            'Estado Cuantitativa', 'Fecha de Evaluación Cuantitativa 2026']
+                cols_seg = [c for c in cols_seg if c in dfs.columns]
+                
+                df_seg_show = dfs[cols_seg].copy()
+                # Formatear fechas si son datetime
+                for col_f in df_seg_show.columns:
+                    if 'Fecha' in col_f:
+                        try:
+                            # Asegurar que sea datetime antes de formatear
+                            df_seg_show[col_f] = pd.to_datetime(df_seg_show[col_f]).dt.strftime('%d-%m-%Y')
+                        except:
+                            pass
+                
+                st.dataframe(df_seg_show, use_container_width=True, height=400, hide_index=True)
+
+    with tab5:
+        if df_seg.empty:
+            st.info("Sin datos de seguimiento disponibles.")
+        else:
+            st.markdown("#### Progreso Mensual — Evaluaciones Realizadas")
+            MESES_ES = {1:'Enero',2:'Febrero',3:'Marzo',4:'Abril',5:'Mayo',6:'Junio',
+                        7:'Julio',8:'Agosto',9:'Septiembre',10:'Octubre',11:'Noviembre',12:'Diciembre'}
+            ORDEN_M = list(MESES_ES.values())
+            filas_p = []
+            for col_f, lbl in [('Fecha de Evaluación Cualitativa 2026', 'Cualitativa'),
+                                ('Fecha de Evaluación Cuantitativa 2026', 'Cuantitativa')]:
+                if col_f in df_seg.columns:
+                    realizadas = df_seg[df_seg[col_f].notna()].copy()
+                    realizadas['mes'] = realizadas[col_f].dt.month
+                    cnt = realizadas.groupby('mes').size().reset_index(name='cantidad')
+                    cnt['tipo'] = lbl
+                    cnt['mes_nombre'] = cnt['mes'].map(MESES_ES)
+                    filas_p.append(cnt)
+            if filas_p:
+                df_p = pd.concat(filas_p, ignore_index=True)
+                fig_p = px.bar(df_p, x='mes_nombre', y='cantidad', color='tipo',
+                               barmode='group', height=450,
+                               title='Evaluaciones realizadas por mes (seguimiento)',
+                               labels={'mes_nombre': 'Mes', 'cantidad': 'Evaluaciones'},
+                               color_discrete_map={'Cualitativa': '#2E86AB', 'Cuantitativa': '#A23B72'},
+                               category_orders={'mes_nombre': ORDEN_M})
+                fig_p.update_traces(texttemplate='%{y}', textposition='outside')
+                st.plotly_chart(fig_p, use_container_width=True)
+            else:
+                st.info("No hay fechas de evaluación registradas en el seguimiento.")
+
+    with tab6:
+        if df_seg.empty:
+            st.info("Sin datos de seguimiento disponibles.")
+        else:
+            st.markdown("#### Vigilancia de Salud — Evaluados 2026")
+            COL_VS = 'Fecha de Evaluación Vigilancia de Salud 2026'
+            COL_H  = 'Número de trabajadores evaluados 2026 Hombres'
+            COL_M  = 'Número de trabajadores evaluados 2026 Mujeres'
+            df_vs = df_seg[df_seg[COL_VS].notna()].copy() if COL_VS in df_seg.columns else pd.DataFrame()
+            v1, v2, v3 = st.columns(3)
+            v1.metric("Registros con VS", f"{len(df_vs):,}")
+            if COL_H in df_vs.columns and not df_vs.empty:
+                total_h = pd.to_numeric(df_vs[COL_H], errors='coerce').sum()
+                total_m = pd.to_numeric(df_vs[COL_M], errors='coerce').sum() if COL_M in df_vs.columns else 0
+                v2.metric("Trabajadores evaluados H", f"{int(total_h):,}")
+                v3.metric("Trabajadoras evaluadas M", f"{int(total_m):,}")
+            if not df_vs.empty:
+                cols_show = [c for c in ['Region Sucursal', 'Nombre Empleador',
+                                          'Identificador único (ID) centro de trabajo (CT)',
+                                          'Protocolo', 'Agente', # Solo nombres legibles
+                                          COL_VS, COL_H, COL_M, 'Observaciones']
+                             if c in df_vs.columns]
+                df_vs_show = df_vs[cols_show].copy()
+                if COL_VS in df_vs_show.columns:
+                    df_vs_show[COL_VS] = df_vs_show[COL_VS].dt.strftime('%d-%m-%Y')
+                st.dataframe(df_vs_show, use_container_width=True, height=400, hide_index=True)
+            else:
+                st.info("No hay registros de Vigilancia de Salud en el seguimiento.")
+
     st.markdown("---")
     st.caption("Versión Producción - Preparado por Diego Vicente Contreras")
 
