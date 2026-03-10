@@ -156,23 +156,18 @@ def normalizar_columnas(df):
 
 def parsear_fecha_flexible(serie):
     """
-    Parsea una serie de fechas que puede tener formatos mixtos:
+    Parsea una serie de fechas que puede tener formatos mixtos, priorizando convención chilena:
     - DD-MM-YYYY (formato Excel original)
-    - M/D/YYYY o MM/DD/YYYY (formato Google Sheets export)
+    - DD/MM/YYYY (formato común nacional / Google Sheets export)
     - YYYY-MM-DD (formato ISO)
     """
-    # Intentar formato DD-MM-YYYY primero
+    # 1. Intentar formato DD-MM-YYYY primero
     resultado = pd.to_datetime(serie, format='%d-%m-%Y', errors='coerce')
 
-    # Para las que fallaron, intentar formato M/D/YYYY (US)
+    # 2. Intentar formato DD/MM/YYYY o DD/MM/YY (Nacional)
     mascara_nulos = resultado.isna() & serie.notna() & (serie.astype(str).str.strip() != '')
     if mascara_nulos.any():
-        resultado[mascara_nulos] = pd.to_datetime(serie[mascara_nulos], format='%m/%d/%Y', errors='coerce')
-
-    # Para las que aún fallaron, intentar formato mixto automático
-    mascara_nulos2 = resultado.isna() & serie.notna() & (serie.astype(str).str.strip() != '')
-    if mascara_nulos2.any():
-        resultado[mascara_nulos2] = pd.to_datetime(serie[mascara_nulos2], dayfirst=True, errors='coerce')
+        resultado[mascara_nulos] = pd.to_datetime(serie[mascara_nulos], dayfirst=True, errors='coerce')
 
     return resultado
 
@@ -592,7 +587,7 @@ def mostrar_resumen_detallado(df_filtrado, protocolo_seleccionado, seccion='tab1
             'Faena Marítimo - Portuaria': 'first'
         }).reset_index()
         
-        df_agrupado['fecha'] = pd.to_datetime(df_agrupado['fecha']).dt.strftime('%d-%m-%Y')
+        df_agrupado['fecha'] = pd.to_datetime(df_agrupado['fecha'], dayfirst=True).dt.strftime('%d-%m-%Y')
         df_agrupado['Cantidad Agentes'] = df_agrupado['Agente'].apply(lambda x: len(x.split(', ')) if x else 0)
         
         df_agrupado.columns = ['ID Centro de Trabajo', 'Fecha', 'Tipo', 'Nombre empleador', 
@@ -912,8 +907,8 @@ try:
                 for col_f in df_seg_show.columns:
                     if 'Fecha' in col_f:
                         try:
-                            # Asegurar que sea datetime antes de formatear
-                            df_seg_show[col_f] = pd.to_datetime(df_seg_show[col_f]).dt.strftime('%d-%m-%Y')
+                            # Asegurar que sea datetime antes de formatear usando dayfirst=True
+                            df_seg_show[col_f] = pd.to_datetime(df_seg_show[col_f], dayfirst=True).dt.strftime('%d-%m-%Y')
                         except:
                             pass
                 
