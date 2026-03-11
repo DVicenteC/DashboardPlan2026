@@ -334,7 +334,7 @@ def preparar_datos_eventos(df):
     
     return df_eventos
 
-def aplicar_filtros(df, anexo_suseso, protocolo, region, tipo, mes, faena_codelco, gerente, maritimo_portuario, holding):
+def aplicar_filtros(df, anexo_suseso, protocolo, region, tipo, mes, faena_codelco, gerente, maritimo_portuario, holding, nombre_empleador):
     """Aplica los filtros seleccionados de forma flexible para Programación y Seguimiento"""
     if df.empty:
         return df
@@ -353,6 +353,9 @@ def aplicar_filtros(df, anexo_suseso, protocolo, region, tipo, mes, faena_codelc
 
     if holding != 'Todos' and 'Holding' in df_filtrado.columns:
         df_filtrado = df_filtrado[df_filtrado['Holding'] == holding].copy()
+    
+    if nombre_empleador != 'Todos' and 'Nombre empleador' in df_filtrado.columns:
+        df_filtrado = df_filtrado[df_filtrado['Nombre empleador'] == nombre_empleador].copy()
     
     if maritimo_portuario != 'Todos' and 'Faena Marítimo - Portuaria' in df_filtrado.columns:
         df_filtrado = df_filtrado[df_filtrado['Faena Marítimo - Portuaria'] == maritimo_portuario].copy()
@@ -698,6 +701,12 @@ try:
         ['Todos'] + holdings_unicos
     )
 
+    empleadores_unicos = sorted([x for x in df_eventos['Nombre empleador'].unique() if x != 'Sin Empleador'])
+    nombre_empleador = st.sidebar.selectbox(
+        "Nombre empleador",
+        ['Todos'] + empleadores_unicos
+    )
+
     tipo = st.sidebar.selectbox(
         "Tipo de Evaluación",
         ['Todas', 'Cualitativa', 'Cuantitativa']
@@ -732,7 +741,7 @@ try:
         st.rerun()
     
     # Aplicar filtros a ambos DataFrames
-    df_filtrado = aplicar_filtros(df_eventos, anexo_suseso, protocolo, region, tipo, mes, faena_codelco, gerente, maritimo_portuario, holding)
+    df_filtrado = aplicar_filtros(df_eventos, anexo_suseso, protocolo, region, tipo, mes, faena_codelco, gerente, maritimo_portuario, holding, nombre_empleador)
     
     # Cargar datos de seguimiento (soft-fail)
     df_seg_raw = cargar_datos_seguimiento()
@@ -747,9 +756,9 @@ try:
                 on='Identificador único (ID) centro de trabajo (CT)', 
                 how='left'
             )
-
+    
     # Aplicar los MISMOS filtros laterales a Seguimiento (si hay datos)
-    df_seg = aplicar_filtros(df_seg_raw, anexo_suseso, protocolo, region, tipo, mes, faena_codelco, gerente, maritimo_portuario, holding) if not df_seg_raw.empty else pd.DataFrame()
+    df_seg = aplicar_filtros(df_seg_raw, anexo_suseso, protocolo, region, tipo, mes, faena_codelco, gerente, maritimo_portuario, holding, nombre_empleador) if not df_seg_raw.empty else pd.DataFrame()
 
     # Métricas
     col1, col2, col3, col4 = st.columns(4)
