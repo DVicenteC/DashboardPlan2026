@@ -667,81 +667,171 @@ try:
         st.error("❌ No hay datos válidos para mostrar. Verifica el archivo de entrada.")
         st.stop()
     
-    # Sidebar - Filtros
+    # ── Sidebar — Filtros Bidireccionales (Cross-filtering) ──────────────────
+    # Cada filtro muestra sólo las opciones compatibles con TODOS los demás
+    # filtros activos. La actualización es inmediata en un solo click.
     st.sidebar.header("🔍 Filtros")
-    
-    # Excluir valores 'Sin Información'
-    anexos_unicos = sorted([x for x in df_eventos['AnexoSUSESO'].unique() if x != 'Sin Información'])
-    anexo_suseso = st.sidebar.selectbox(
-        "Anexo 4 - Protocolos Ministeriales o Anexo 5 No Ministerial",
-        ['Todos'] + anexos_unicos
-    )
-    
-    protocolos_unicos = sorted([x for x in df_eventos['Protocolo'].unique() if x != 'Sin Protocolo'])
-    protocolo = st.sidebar.selectbox(
-        "Protocolo o Programa",
-        ['Todos'] + protocolos_unicos
-    )
-    
-    regiones_unicas = sorted([x for x in df_eventos['Region Sucursal'].unique() if x != 'Sin Región'])
-    region = st.sidebar.selectbox(
-        "Región",
-        ['Todas'] + regiones_unicas
-    )
 
-    gerentes_unicos = sorted([x for x in df_eventos['Gerencia - Cuentas Nacionales'].unique() if x != 'Sin Gerente'])
+    _base = df_eventos  # dataset completo, nunca se modifica
+
+    # ── 1. Defaults e inicialización de session_state ─────────────────────────
+    _defaults = {
+        'ho_gerente':   'Todos',
+        'ho_holding':   'Todos',
+        'ho_empleador': 'Todos',
+        'ho_protocolo': 'Todos',
+        'ho_region':    'Todas',
+        'ho_anexo':     'Todos',
+        'ho_tipo':      'Todas',
+        'ho_mes':       'Todos',
+        'ho_faena_cod': 'Todos',
+        'ho_maritimo':  'Todos',
+    }
+    for k, v in _defaults.items():
+        if k not in st.session_state:
+            st.session_state[k] = v
+
+    # Reset pendiente (del botón) — ejecutar ANTES de cualquier widget
+    if st.session_state.get('_ho_reset', False):
+        for k, v in _defaults.items():
+            st.session_state[k] = v
+        st.session_state['_ho_reset'] = False
+
+    # ── 2. Definición de filtros ──────────────────────────────────────────────
+    # (key_session, columna_df, valor_excluido, valor_todos)
+    _defs = [
+        ('ho_gerente',   'Gerencia - Cuentas Nacionales', 'Sin Gerente',     'Todos'),
+        ('ho_holding',   'Holding',                        'Sin Holding',     'Todos'),
+        ('ho_empleador', 'Nombre empleador',               'Sin Empleador',   'Todos'),
+        ('ho_protocolo', 'Protocolo',                      'Sin Protocolo',   'Todos'),
+        ('ho_region',    'Region Sucursal',                'Sin Región',      'Todas'),
+        ('ho_anexo',     'AnexoSUSESO',                    'Sin Información', 'Todos'),
+        ('ho_tipo',      'tipo',                           None,              'Todas'),
+        ('ho_mes',       'mes_nombre',                     None,              'Todos'),
+    ]
+    if 'Faena Codelco' in _base.columns:
+        _defs.append(('ho_faena_cod', 'Faena Codelco', 'Sin Faena', 'Todos'))
+    if 'Faena Marítimo - Portuaria' in _base.columns:
+        _defs.append(('ho_maritimo', 'Faena Marítimo - Portuaria', 'Sin Información', 'Todos'))
+
+    # ── 3. Funciones auxiliares ───────────────────────────────────────────────
+    def _sin_uno(excluir_key):
+        """Retorna _base filtrado por TODOS los filtros excepto el indicado."""
+        dff = _base
+        for key, col, _, all_val in _defs:
+            if key == excluir_key:
+                continue
+            val = st.session_state.get(key, all_val)
+            if val != all_val and col in dff.columns:
+                dff = dff[dff[col] == val]
+        return dff
+
+    def _opciones(key, col, excl_val):
+        dff = _sin_uno(key)
+        if col not in dff.columns:
+            return []
+        vals = dff[col].dropna().unique()
+        if excl_val:
+            vals = [x for x in vals if x != excl_val]
+        return sorted(vals)
+
+    # ── 4. Pase de validación ANTES de renderizar widgets ─────────────────────
+    # Si un valor activo ya no aparece en las opciones disponibles (porque
+    # otro filtro lo excluyó), se resetea a "Todos" automáticamente.
+    # Se itera hasta estabilidad (máx. N veces).
+    for _ in range(len(_defs)):
+        changed = False
+        for key, col, excl_val, all_val in _defs:
+            val = st.session_state.get(key, all_val)
+            if val == all_val:
+                continue
+            available = _opciones(key, col, excl_val)
+            if val not in available:
+                st.session_state[key] = all_val
+                changed = True
+        if not changed:
+            break
+
+    # ── 5. Widgets con key= (session_state ya está limpio y consistente) ──────
+    meses_espanol = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+                     'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
+
     gerente = st.sidebar.selectbox(
         "Gerencia - Cuentas Nacionales",
-        ['Todos'] + gerentes_unicos
+        ['Todos'] + _opciones('ho_gerente', 'Gerencia - Cuentas Nacionales', 'Sin Gerente'),
+        key='ho_gerente'
     )
-
-    holdings_unicos = sorted([x for x in df_eventos['Holding'].unique() if x != 'Sin Holding'])
     holding = st.sidebar.selectbox(
         "Holding",
-        ['Todos'] + holdings_unicos
+        ['Todos'] + _opciones('ho_holding', 'Holding', 'Sin Holding'),
+        key='ho_holding'
     )
-
-    empleadores_unicos = sorted([x for x in df_eventos['Nombre empleador'].unique() if x != 'Sin Empleador'])
     nombre_empleador = st.sidebar.selectbox(
         "Nombre empleador",
-        ['Todos'] + empleadores_unicos
+        ['Todos'] + _opciones('ho_empleador', 'Nombre empleador', 'Sin Empleador'),
+        key='ho_empleador'
     )
-
+    protocolo = st.sidebar.selectbox(
+        "Protocolo o Programa",
+        ['Todos'] + _opciones('ho_protocolo', 'Protocolo', 'Sin Protocolo'),
+        key='ho_protocolo'
+    )
+    region = st.sidebar.selectbox(
+        "Región",
+        ['Todas'] + _opciones('ho_region', 'Region Sucursal', 'Sin Región'),
+        key='ho_region'
+    )
+    anexo_suseso = st.sidebar.selectbox(
+        "Anexo 4 - Protocolos Ministeriales o Anexo 5 No Ministerial",
+        ['Todos'] + _opciones('ho_anexo', 'AnexoSUSESO', 'Sin Información'),
+        key='ho_anexo'
+    )
     tipo = st.sidebar.selectbox(
         "Tipo de Evaluación",
-        ['Todas', 'Cualitativa', 'Cuantitativa']
+        ['Todas'] + _opciones('ho_tipo', 'tipo', None),
+        key='ho_tipo'
     )
-    
-    meses_espanol = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 
-                     'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
+    # Mes: orden natural de meses
+    meses_disp = [m for m in meses_espanol if m in _opciones('ho_mes', 'mes_nombre', None)]
     mes = st.sidebar.selectbox(
         "Mes",
-        ['Todos'] + meses_espanol
+        ['Todos'] + meses_disp,
+        key='ho_mes'
     )
-    
-    if 'Faena Codelco' in df_eventos.columns:
-        faenas_unicas = sorted([x for x in df_eventos['Faena Codelco'].unique() if x != 'Sin Faena'])
+
+    # Faenas condicionales
+    if 'Faena Codelco' in _base.columns:
         faena_codelco = st.sidebar.selectbox(
             "Faena Codelco",
-            ['Todos'] + faenas_unicas
+            ['Todos'] + _opciones('ho_faena_cod', 'Faena Codelco', 'Sin Faena'),
+            key='ho_faena_cod'
         )
     else:
         faena_codelco = 'Todos'
-    
-    if 'Faena Marítimo - Portuaria' in df_eventos.columns:
-        maritimo_portuario_unicos = sorted([x for x in df_eventos['Faena Marítimo - Portuaria'].unique() if x != 'Sin Información'])
+
+    if 'Faena Marítimo - Portuaria' in _base.columns:
         maritimo_portuario = st.sidebar.selectbox(
             "Faena Marítimo - Portuaria",
-            ['Todos'] + maritimo_portuario_unicos
+            ['Todos'] + _opciones('ho_maritimo', 'Faena Marítimo - Portuaria', 'Sin Información'),
+            key='ho_maritimo'
         )
     else:
         maritimo_portuario = 'Todos'
-    
+
+    # ── 6. Resultado final ────────────────────────────────────────────────────
+    df_filtrado = _base.copy()
+    for key, col, _, all_val in _defs:
+        val = st.session_state.get(key, all_val)
+        if val != all_val and col in df_filtrado.columns:
+            df_filtrado = df_filtrado[df_filtrado[col] == val]
+
+    # Contador y reseteo
+    st.sidebar.markdown("---")
+    st.sidebar.caption(f"🔎 **{len(df_filtrado):,}** registros con los filtros actuales")
+
     if st.sidebar.button("🔄 Resetear Filtros"):
+        st.session_state['_ho_reset'] = True
         st.rerun()
-    
-    # Aplicar filtros a ambos DataFrames
-    df_filtrado = aplicar_filtros(df_eventos, anexo_suseso, protocolo, region, tipo, mes, faena_codelco, gerente, maritimo_portuario, holding, nombre_empleador)
     
     # Cargar datos de seguimiento (soft-fail)
     df_seg_raw = cargar_datos_seguimiento()
@@ -757,7 +847,7 @@ try:
                 how='left'
             )
     
-    # Aplicar los MISMOS filtros laterales a Seguimiento (si hay datos)
+    # Aplicar los MISMOS filtros laterales a Seguimiento (reutiliza variables de los selectbox)
     df_seg = aplicar_filtros(df_seg_raw, anexo_suseso, protocolo, region, tipo, mes, faena_codelco, gerente, maritimo_portuario, holding, nombre_empleador) if not df_seg_raw.empty else pd.DataFrame()
 
     # Métricas
