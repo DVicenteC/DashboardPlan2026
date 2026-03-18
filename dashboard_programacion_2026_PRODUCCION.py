@@ -1116,12 +1116,12 @@ try:
             a1.metric("Realizadas", f"{rt_total_t1:,}")
             with a2:
                 st.metric("Cuali. del programa",       f"{rc_prog_t1:,}", f"de {cuali_count:,} programadas")
-                if np_cuali_t1 > 0:
-                    st.metric("Cuali. fuera del programa", f"{np_cuali_t1:,}")
+                if rc_fuera_t1 > 0:
+                    st.metric("Cuali. fuera del programa", f"{rc_fuera_t1:,}")
             with a3:
                 st.metric("Cuanti. del programa",      f"{rq_prog_t1:,}", f"de {cuanti_count:,} programadas")
-                if np_cuanti_t1 > 0:
-                    st.metric("Cuanti. fuera del programa", f"{np_cuanti_t1:,}")
+                if rq_fuera_t1 > 0:
+                    st.metric("Cuanti. fuera del programa", f"{rq_fuera_t1:,}")
             a4.metric("% Avance", f"{pct_t1}%")
             st.progress(pct_t1 / 100)
 
