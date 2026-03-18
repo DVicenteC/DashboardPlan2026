@@ -1087,10 +1087,8 @@ try:
             rc_prog_t1 = int(mask_real_c.sum())
             rq_prog_t1 = int(mask_real_q.sum())
 
-            # ── Realizadas fuera del programa ────────────────────────────────
-            rc_fuera_t1  = int(df_cuali['Estado Cualitativa'].isin(ESTADOS_FUERA).sum())
-            rq_fuera_t1  = int(df_cuanti['Estado Cuantitativa'].isin(ESTADOS_FUERA).sum())
-            rt_total_t1  = rc_prog_t1 + rq_prog_t1 + rc_fuera_t1 + rq_fuera_t1
+            # (rc_fuera_t1 / rq_fuera_t1 / rt_total_t1 se calculan más abajo,
+            #  tras pend_t1, con scope exacto de IDs de df_filtrado)
 
             # ── Atrasadas ────────────────────────────────────────────────────
             pa_t1 = int((df_cuali['Estado Cualitativa'] == 'Pendiente atrasada').sum())
@@ -1110,6 +1108,21 @@ try:
 
             pct_t1  = round(rt_t1 / pt_t1 * 100, 1) if pt_t1 > 0 else 0
             pend_t1 = pt_t1 - rt_t1
+
+            # ── Fuera del programa: scoped por IDs que sobrevivieron el filtro ─
+            # "Realizada fuera de programa": en programación pero sin fecha asignada
+            # "Realizada - No programada":  VS(2), no estaban en la programación
+            # En long format estas filas no existen → derivamos desde df_seg_raw
+            # restringido a los mismos CTs de df_filtrado (coherencia garantizada).
+            _id_col = 'Identificador único (ID) centro de trabajo (CT)'
+            _ids_scope = set(df_filtrado[_id_col].unique())
+            if not df_seg_raw.empty and _ids_scope:
+                _df_scope = df_seg_raw[df_seg_raw[_id_col].isin(_ids_scope)]
+                rc_fuera_t1 = int(_df_scope['Estado Cualitativa'].isin(ESTADOS_FUERA).sum()) if 'Estado Cualitativa' in _df_scope.columns else 0
+                rq_fuera_t1 = int(_df_scope['Estado Cuantitativa'].isin(ESTADOS_FUERA).sum()) if 'Estado Cuantitativa' in _df_scope.columns else 0
+            else:
+                rc_fuera_t1 = rq_fuera_t1 = 0
+            rt_total_t1 = rt_t1 + rc_fuera_t1 + rq_fuera_t1
 
             st.markdown("##### ✅ Avance del seguimiento")
             a1, a2, a3, a4 = st.columns(4)
