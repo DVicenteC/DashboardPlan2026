@@ -1063,10 +1063,25 @@ try:
             st.metric("Mes con Mayor Carga", "N/A")
     
     st.markdown("---")
-    
-    # Tabs — Programación (1-3) + Seguimiento (4-6)
-    tab1, tab2 = st.tabs([
-        "📊 Programación y Avance", "🏥 Vigilancia de Salud"
+
+    # ── Preparación de datos compartidos entre tabs ──────────────────────────
+    ESTADOS_FUERA = {'Realizada fuera de programa', 'Realizada - No programada'}
+    _id_col_tab   = 'Identificador único (ID) centro de trabajo (CT)'
+    _ids_scope    = set(df_filtrado[_id_col_tab].unique())
+
+    # Evaluaciones fuera del programa: df_seg_raw scoped a los IDs del filtro actual
+    if not df_seg_raw.empty and _ids_scope:
+        _df_scope = df_seg_raw[df_seg_raw[_id_col_tab].isin(_ids_scope)].copy()
+        _mask_fuera = (
+            _df_scope.get('Estado Cualitativa', pd.Series(dtype=str)).isin(ESTADOS_FUERA) |
+            _df_scope.get('Estado Cuantitativa', pd.Series(dtype=str)).isin(ESTADOS_FUERA)
+        )
+        df_fuera_prog = _df_scope[_mask_fuera].copy()
+    else:
+        df_fuera_prog = pd.DataFrame()
+
+    tab1, tab2, tab3 = st.tabs([
+        "📊 Programación y Avance", "📋 Fuera de Programa", "🏥 Vigilancia de Salud"
     ])
 
     with tab1:
@@ -1074,8 +1089,6 @@ try:
         # Fuente única: df_filtrado (= df_maestro ya filtrado por el sidebar).
         # Métricas y tabla comparten exactamente el mismo universo de datos.
         if 'Estado Cualitativa' in df_filtrado.columns:
-            ESTADOS_FUERA = {'Realizada fuera de programa', 'Realizada - No programada'}
-
             df_cuali  = df_filtrado[df_filtrado['tipo'] == 'Cualitativa']
             df_cuanti = df_filtrado[df_filtrado['tipo'] == 'Cuantitativa']
 
@@ -1109,19 +1122,9 @@ try:
             pct_t1  = round(rt_t1 / pt_t1 * 100, 1) if pt_t1 > 0 else 0
             pend_t1 = pt_t1 - rt_t1
 
-            # ── Fuera del programa: scoped por IDs que sobrevivieron el filtro ─
-            # "Realizada fuera de programa": en programación pero sin fecha asignada
-            # "Realizada - No programada":  VS(2), no estaban en la programación
-            # En long format estas filas no existen → derivamos desde df_seg_raw
-            # restringido a los mismos CTs de df_filtrado (coherencia garantizada).
-            _id_col = 'Identificador único (ID) centro de trabajo (CT)'
-            _ids_scope = set(df_filtrado[_id_col].unique())
-            if not df_seg_raw.empty and _ids_scope:
-                _df_scope = df_seg_raw[df_seg_raw[_id_col].isin(_ids_scope)]
-                rc_fuera_t1 = int(_df_scope['Estado Cualitativa'].isin(ESTADOS_FUERA).sum()) if 'Estado Cualitativa' in _df_scope.columns else 0
-                rq_fuera_t1 = int(_df_scope['Estado Cuantitativa'].isin(ESTADOS_FUERA).sum()) if 'Estado Cuantitativa' in _df_scope.columns else 0
-            else:
-                rc_fuera_t1 = rq_fuera_t1 = 0
+                # Fuera del programa: usa df_fuera_prog pre-calculado antes de los tabs
+            rc_fuera_t1 = int(df_fuera_prog['Estado Cualitativa'].isin(ESTADOS_FUERA).sum()) if not df_fuera_prog.empty and 'Estado Cualitativa' in df_fuera_prog.columns else 0
+            rq_fuera_t1 = int(df_fuera_prog['Estado Cuantitativa'].isin(ESTADOS_FUERA).sum()) if not df_fuera_prog.empty and 'Estado Cuantitativa' in df_fuera_prog.columns else 0
             rt_total_t1 = rt_t1 + rc_fuera_t1 + rq_fuera_t1
 
             st.markdown("##### ✅ Avance del seguimiento")
@@ -1155,6 +1158,45 @@ try:
             st.warning("No hay datos para mostrar con los filtros seleccionados")
 
     with tab2:
+        st.markdown("#### Evaluaciones Fuera de Programa")
+        if df_fuera_prog.empty:
+            st.info("No hay evaluaciones fuera de programa para los filtros actuales.")
+        else:
+            fp_cuali  = int(df_fuera_prog['Estado Cualitativa'].isin(ESTADOS_FUERA).sum()) if 'Estado Cualitativa' in df_fuera_prog.columns else 0
+            fp_cuanti = int(df_fuera_prog['Estado Cuantitativa'].isin(ESTADOS_FUERA).sum()) if 'Estado Cuantitativa' in df_fuera_prog.columns else 0
+            f1, f2, f3 = st.columns(3)
+            f1.metric("Total fuera de programa", f"{fp_cuali + fp_cuanti:,}")
+            f2.metric("Cualitativas", f"{fp_cuali:,}")
+            f3.metric("Cuantitativas", f"{fp_cuanti:,}")
+            st.markdown("---")
+
+            _fp_cols = [c for c in [
+                'Region Sucursal', 'Nombre Empleador',
+                _id_col_tab, 'Protocolo',
+                'AGENTE' if 'AGENTE' in df_fuera_prog.columns else 'Agente',
+                'Estado Cualitativa', 'Fecha de Evaluación Cualitativa 2026',
+                'Estado Cuantitativa', 'Fecha de Evaluación Cuantitativa 2026',
+            ] if c in df_fuera_prog.columns]
+
+            df_fp_show = df_fuera_prog[_fp_cols].copy()
+            for col in ['Fecha de Evaluación Cualitativa 2026', 'Fecha de Evaluación Cuantitativa 2026']:
+                if col in df_fp_show.columns and pd.api.types.is_datetime64_any_dtype(df_fp_show[col]):
+                    df_fp_show[col] = df_fp_show[col].dt.strftime('%d-%m-%Y')
+
+            st.dataframe(df_fp_show, use_container_width=True, height=450, hide_index=True)
+
+            buf = io.BytesIO()
+            with pd.ExcelWriter(buf, engine='openpyxl') as writer:
+                df_fp_show.to_excel(writer, index=False, sheet_name='Fuera_de_Programa')
+            st.download_button(
+                label="📥 Descargar en Excel",
+                data=buf.getvalue(),
+                file_name=f'fuera_de_programa_{datetime.now().strftime("%Y%m%d")}.xlsx',
+                mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                key='download_fuera_prog'
+            )
+
+    with tab3:
         if df_seg.empty:
             st.info("Sin datos de seguimiento disponibles.")
         else:
