@@ -334,6 +334,53 @@ def preparar_datos_eventos(df):
     
     return df_eventos
 
+@st.cache_data
+def preparar_df_maestro(df_eventos, df_seg_raw):
+    """Une programación (long) con seguimiento (wide) en un único dataset pre-filtro.
+
+    JOIN LEFT por (CT + Protocolo + Agente).  El sidebar filtrará este dataset
+    una sola vez, garantizando que métricas y tabla siempre usen el mismo universo.
+    """
+    SEG_COLS = [
+        'Estado Cualitativa',
+        'Fecha de Evaluación Cualitativa 2026',
+        'Estado Cuantitativa',
+        'Fecha de Evaluación Cuantitativa 2026',
+    ]
+    df_prog = df_eventos.copy()
+
+    if df_seg_raw.empty:
+        for col in SEG_COLS:
+            df_prog[col] = None
+        return df_prog
+
+    id_col     = 'Identificador único (ID) centro de trabajo (CT)'
+    agente_seg = 'AGENTE' if 'AGENTE' in df_seg_raw.columns else 'Agente'
+
+    cols_needed = [id_col, 'Protocolo', agente_seg] + [c for c in SEG_COLS if c in df_seg_raw.columns]
+    df_slim = (df_seg_raw[cols_needed]
+               .drop_duplicates(subset=[id_col, 'Protocolo', agente_seg])
+               .copy())
+
+    # Clave de join normalizada para evitar diferencias de mayúsculas/espacios
+    sep = '§'
+    df_prog['_jk'] = (df_prog[id_col].str.strip().str.upper() + sep +
+                      df_prog['Protocolo'].str.strip().str.upper() + sep +
+                      df_prog['Agente'].str.strip().str.lower())
+    df_slim['_jk'] = (df_slim[id_col].str.strip().str.upper() + sep +
+                      df_slim['Protocolo'].str.strip().str.upper() + sep +
+                      df_slim[agente_seg].str.strip().str.lower())
+    df_slim = df_slim.drop(columns=[id_col, 'Protocolo', agente_seg])
+
+    df_maestro = df_prog.merge(df_slim, on='_jk', how='left').drop(columns=['_jk'])
+
+    for col in SEG_COLS:
+        if col not in df_maestro.columns:
+            df_maestro[col] = None
+
+    return df_maestro
+
+
 def aplicar_filtros(df, anexo_suseso, protocolo, region, tipo, mes, faena_codelco, gerente, maritimo_portuario, holding, nombre_empleador):
     """Aplica los filtros seleccionados de forma flexible para Programación y Seguimiento"""
     if df.empty:
@@ -482,9 +529,12 @@ def grafico_barras_mensuales(df, protocolo_seleccionado):
     
     return fig
 
-def grafico_programado_vs_realizado(df_prog, df_seg, protocolo_seleccionado):
-    """Gráfico de barras agrupadas: evaluaciones programadas vs realizadas por mes."""
-    if df_prog is None or len(df_prog) == 0:
+def grafico_programado_vs_realizado(df_filtrado, protocolo_seleccionado):
+    """Gráfico de barras agrupadas: evaluaciones programadas vs realizadas por mes.
+
+    Usa df_filtrado como única fuente (ya contiene columnas de seguimiento tras el pre-merge).
+    """
+    if df_filtrado is None or len(df_filtrado) == 0:
         return None
 
     nombres_meses_es = {
@@ -498,12 +548,12 @@ def grafico_programado_vs_realizado(df_prog, df_seg, protocolo_seleccionado):
                       es_protocolo_plaguicidas(protocolo_seleccionado))
     id_col = 'Identificador único (ID) centro de trabajo (CT)'
 
-    # ── Programadas ──────────────────────────────────────────────────────────
+    # ── Programadas (basado en mes de fecha programada, columna 'mes') ────────
     if es_plaguicidas:
-        prog = (df_prog.groupby(['mes', 'tipo'], observed=False)[id_col]
+        prog = (df_filtrado.groupby(['mes', 'tipo'], observed=False)[id_col]
                 .nunique().reset_index(name='cantidad'))
     else:
-        prog = (df_prog.groupby(['mes', 'tipo'], observed=False)
+        prog = (df_filtrado.groupby(['mes', 'tipo'], observed=False)
                 .size().reset_index(name='cantidad'))
 
     prog['mes_nombre'] = prog['mes'].map(nombres_meses_es).fillna('Sin Mes')
@@ -513,39 +563,44 @@ def grafico_programado_vs_realizado(df_prog, df_seg, protocolo_seleccionado):
     })
     prog = prog[prog['cantidad'] > 0][['mes', 'mes_nombre', 'serie', 'cantidad']]
 
-    # ── Realizadas ───────────────────────────────────────────────────────────
+    # ── Realizadas (extraídas de las columnas de seguimiento en df_filtrado) ──
     frames_real = []
-    if df_seg is not None and not df_seg.empty:
-        col_fc = 'Fecha de Evaluación Cualitativa 2026'
-        col_ec = 'Estado Cualitativa'
-        col_fq = 'Fecha de Evaluación Cuantitativa 2026'
-        col_eq = 'Estado Cuantitativa'
+    col_fc = 'Fecha de Evaluación Cualitativa 2026'
+    col_ec = 'Estado Cualitativa'
+    col_fq = 'Fecha de Evaluación Cuantitativa 2026'
+    col_eq = 'Estado Cuantitativa'
 
-        if col_fc in df_seg.columns and col_ec in df_seg.columns:
-            df_rc = df_seg[df_seg[col_ec].str.startswith('Realizada', na=False)].copy()
-            df_rc['_fecha'] = pd.to_datetime(df_rc[col_fc], dayfirst=True, errors='coerce')
-            df_rc['mes'] = df_rc['_fecha'].dt.month
-            df_rc = df_rc.dropna(subset=['mes'])
-            df_rc['mes'] = df_rc['mes'].astype(int)
-            if es_plaguicidas:
-                r = df_rc.groupby('mes')[id_col].nunique().reset_index(name='cantidad')
-            else:
-                r = df_rc.groupby('mes').size().reset_index(name='cantidad')
-            r['serie'] = 'Cuali. realizada'
-            frames_real.append(r)
+    if col_fc in df_filtrado.columns and col_ec in df_filtrado.columns:
+        df_rc = df_filtrado[
+            (df_filtrado['tipo'] == 'Cualitativa') &
+            df_filtrado[col_ec].str.startswith('Realizada', na=False)
+        ].copy()
+        df_rc['_mes_real'] = pd.to_datetime(df_rc[col_fc], dayfirst=True, errors='coerce').dt.month
+        df_rc = df_rc.dropna(subset=['_mes_real'])
+        df_rc['_mes_real'] = df_rc['_mes_real'].astype(int)
+        if es_plaguicidas:
+            r = df_rc.groupby('_mes_real')[id_col].nunique().reset_index(name='cantidad')
+        else:
+            r = df_rc.groupby('_mes_real').size().reset_index(name='cantidad')
+        r = r.rename(columns={'_mes_real': 'mes'})
+        r['serie'] = 'Cuali. realizada'
+        frames_real.append(r)
 
-        if col_fq in df_seg.columns and col_eq in df_seg.columns:
-            df_rq = df_seg[df_seg[col_eq].str.startswith('Realizada', na=False)].copy()
-            df_rq['_fecha'] = pd.to_datetime(df_rq[col_fq], dayfirst=True, errors='coerce')
-            df_rq['mes'] = df_rq['_fecha'].dt.month
-            df_rq = df_rq.dropna(subset=['mes'])
-            df_rq['mes'] = df_rq['mes'].astype(int)
-            if es_plaguicidas:
-                r = df_rq.groupby('mes')[id_col].nunique().reset_index(name='cantidad')
-            else:
-                r = df_rq.groupby('mes').size().reset_index(name='cantidad')
-            r['serie'] = 'Cuanti. realizada'
-            frames_real.append(r)
+    if col_fq in df_filtrado.columns and col_eq in df_filtrado.columns:
+        df_rq = df_filtrado[
+            (df_filtrado['tipo'] == 'Cuantitativa') &
+            df_filtrado[col_eq].str.startswith('Realizada', na=False)
+        ].copy()
+        df_rq['_mes_real'] = pd.to_datetime(df_rq[col_fq], dayfirst=True, errors='coerce').dt.month
+        df_rq = df_rq.dropna(subset=['_mes_real'])
+        df_rq['_mes_real'] = df_rq['_mes_real'].astype(int)
+        if es_plaguicidas:
+            r = df_rq.groupby('_mes_real')[id_col].nunique().reset_index(name='cantidad')
+        else:
+            r = df_rq.groupby('_mes_real').size().reset_index(name='cantidad')
+        r = r.rename(columns={'_mes_real': 'mes'})
+        r['serie'] = 'Cuanti. realizada'
+        frames_real.append(r)
 
     # ── Combinar ─────────────────────────────────────────────────────────────
     if frames_real:
@@ -623,7 +678,7 @@ def grafico_top_protocolos(df):
     
     return fig
 
-def mostrar_resumen_detallado(df_filtrado, protocolo_seleccionado, seccion='tab1', df_seg=None):
+def mostrar_resumen_detallado(df_filtrado, protocolo_seleccionado, seccion='tab1'):
     """Muestra un resumen detallado de las evaluaciones filtradas - VERSIÓN CORREGIDA"""
     if len(df_filtrado) == 0:
         st.info("No hay evaluaciones para mostrar con los filtros seleccionados")
@@ -748,47 +803,25 @@ def mostrar_resumen_detallado(df_filtrado, protocolo_seleccionado, seccion='tab1
             columnas_detalle.append('Faena Codelco')
             nombres_columnas.append('Faena Codelco')
 
+        # Columnas de seguimiento ya presentes en df_filtrado (pre-merge al cargar)
+        SEG_MAP = {
+            'Estado Cualitativa':                    'Estado Cuali.',
+            'Fecha de Evaluación Cualitativa 2026':  'Fecha real Cuali.',
+            'Estado Cuantitativa':                   'Estado Cuanti.',
+            'Fecha de Evaluación Cuantitativa 2026': 'Fecha real Cuanti.',
+        }
+        for src, dst in SEG_MAP.items():
+            if src in df_filtrado.columns:
+                columnas_detalle.append(src)
+                nombres_columnas.append(dst)
+
+        columnas_detalle = [c for c in columnas_detalle if c in df_filtrado.columns]
+        nombres_columnas = nombres_columnas[:len(columnas_detalle)]
+
         df_tabla = df_filtrado[columnas_detalle].copy()
         df_tabla['fecha'] = df_tabla['fecha'].dt.strftime('%d-%m-%Y')
         df_tabla.columns = nombres_columnas
         df_tabla = df_tabla.sort_values('Fecha')
-
-        # ── Join con seguimiento: agregar 4 columnas de estado/fecha ─────────
-        if df_seg is not None and not df_seg.empty:
-            id_col_j  = 'Identificador único (ID) centro de trabajo (CT)'
-            seg_cols  = [id_col_j, 'Protocolo']
-            agente_seg = 'AGENTE' if 'AGENTE' in df_seg.columns else (
-                          'Agente' if 'Agente' in df_seg.columns else None)
-            extra_seg = ['Estado Cualitativa', 'Fecha de Evaluación Cualitativa 2026',
-                         'Estado Cuantitativa', 'Fecha de Evaluación Cuantitativa 2026']
-            # Mantener sólo columnas que existen en df_seg
-            extra_seg = [c for c in extra_seg if c in df_seg.columns]
-
-            if agente_seg and extra_seg:
-                seg_cols.append(agente_seg)
-                df_seg_join = df_seg[seg_cols + extra_seg].copy()
-
-                # Normalizar clave de agente a minúsculas para join robusto
-                df_tabla['_agente_key'] = df_tabla['Agente'].str.strip().str.lower()
-                df_seg_join['_agente_key'] = df_seg_join[agente_seg].str.strip().str.lower()
-                df_seg_join = df_seg_join.drop(columns=[agente_seg])
-
-                df_tabla = df_tabla.merge(
-                    df_seg_join,
-                    left_on=[id_col_j, 'Protocolo', '_agente_key'],
-                    right_on=[id_col_j, 'Protocolo', '_agente_key'],
-                    how='left'
-                )
-                df_tabla = df_tabla.drop(columns=['_agente_key'])
-
-                # Renombrar columnas de seguimiento
-                rename_seg = {
-                    'Estado Cualitativa':                    'Estado Cuali.',
-                    'Fecha de Evaluación Cualitativa 2026':  'Fecha real Cuali.',
-                    'Estado Cuantitativa':                   'Estado Cuanti.',
-                    'Fecha de Evaluación Cuantitativa 2026': 'Fecha real Cuanti.',
-                }
-                df_tabla = df_tabla.rename(columns={k: v for k, v in rename_seg.items() if k in df_tabla.columns})
         
         st.dataframe(df_tabla, use_container_width=True, height=400, hide_index=True)
         
@@ -816,11 +849,13 @@ st.markdown("---")
 # Cargar datos con manejo de errores
 try:
     with st.spinner('Cargando datos... ⏳'):
-        df = cargar_datos()
-        df_eventos = preparar_datos_eventos(df)
-    
+        df          = cargar_datos()
+        df_eventos  = preparar_datos_eventos(df)
+        df_seg_raw  = cargar_datos_seguimiento()
+        df_maestro  = preparar_df_maestro(df_eventos, df_seg_raw)
+
     # Validar que hay datos
-    if len(df_eventos) == 0:
+    if len(df_maestro) == 0:
         st.error("❌ No hay datos válidos para mostrar. Verifica el archivo de entrada.")
         st.stop()
     
@@ -829,7 +864,7 @@ try:
     # filtros activos. La actualización es inmediata en un solo click.
     st.sidebar.header("🔍 Filtros")
 
-    _base = df_eventos  # dataset completo, nunca se modifica
+    _base = df_maestro  # dataset unificado (programación + seguimiento), nunca se modifica
 
     # ── 1. Defaults e inicialización de session_state ─────────────────────────
     _defaults = {
@@ -990,22 +1025,11 @@ try:
         st.session_state['_ho_reset'] = True
         st.rerun()
     
-    # Cargar datos de seguimiento (soft-fail)
-    df_seg_raw = cargar_datos_seguimiento()
-    
-    # Asegurar que df_seg tenga 'Faena Codelco' para que el filtro lateral funcione
-    if not df_seg_raw.empty and 'Faena Codelco' not in df_seg_raw.columns:
-        # Intentar traer Faena Codelco desde df_eventos usando el ID-CT
-        if 'Faena Codelco' in df_eventos.columns:
-            mapeo_faena = df_eventos[['Identificador único (ID) centro de trabajo (CT)', 'Faena Codelco']].drop_duplicates().copy()
-            df_seg_raw = df_seg_raw.merge(
-                mapeo_faena, 
-                on='Identificador único (ID) centro de trabajo (CT)', 
-                how='left'
-            )
-    
-    # Aplicar los MISMOS filtros laterales a Seguimiento (reutiliza variables de los selectbox)
-    df_seg = aplicar_filtros(df_seg_raw, anexo_suseso, protocolo, region, tipo, mes, faena_codelco, gerente, maritimo_portuario, holding, nombre_empleador) if not df_seg_raw.empty else pd.DataFrame()
+    # df_seg: filtrado sólo para Tab 2 (Vigilancia de Salud).
+    # Tab 1 ya no lo necesita — sus métricas y tabla usan df_filtrado (= df_maestro filtrado).
+    df_seg = (aplicar_filtros(df_seg_raw, anexo_suseso, protocolo, region, tipo, mes,
+                              faena_codelco, gerente, maritimo_portuario, holding, nombre_empleador)
+              if not df_seg_raw.empty else pd.DataFrame())
 
     # Métricas
     col1, col2, col3, col4 = st.columns(4)
@@ -1046,53 +1070,46 @@ try:
     ])
 
     with tab1:
-        # ── Avance de seguimiento (si está disponible) ─────────────────────
-        if not df_seg.empty and 'Estado Cualitativa' in df_seg.columns:
-            # Estados que indican que la evaluación NO estaba en la programación oficial:
-            # "Realizada fuera de programa" → estaba en el archivo pero sin fecha asignada
-            # "Realizada - No programada"   → no estaba en la programación (filas VS(2))
+        # ── Avance de seguimiento ───────────────────────────────────────────
+        # Fuente única: df_filtrado (= df_maestro ya filtrado por el sidebar).
+        # Métricas y tabla comparten exactamente el mismo universo de datos.
+        if 'Estado Cualitativa' in df_filtrado.columns:
             ESTADOS_FUERA = {'Realizada fuera de programa', 'Realizada - No programada'}
 
-            # Realizadas totales (todas las variantes de "Realizada*", incluye fuera del programa)
-            rc_t1 = int(df_seg['Estado Cualitativa'].str.startswith('Realizada', na=False).sum())
-            rq_t1 = int(df_seg['Estado Cuantitativa'].str.startswith('Realizada', na=False).sum()) if 'Estado Cuantitativa' in df_seg.columns else 0
-            rt_total_t1 = rc_t1 + rq_t1   # titular "Realizadas" = total incluyendo fuera
+            df_cuali  = df_filtrado[df_filtrado['tipo'] == 'Cualitativa']
+            df_cuanti = df_filtrado[df_filtrado['tipo'] == 'Cuantitativa']
 
-            # Fuera del programa (sin fecha asignada o no incluidas)
-            np_cuali_t1  = int(df_seg['Estado Cualitativa'].isin(ESTADOS_FUERA).sum())
-            np_cuanti_t1 = int(df_seg['Estado Cuantitativa'].isin(ESTADOS_FUERA).sum()) if 'Estado Cuantitativa' in df_seg.columns else 0
-            np_total_t1  = np_cuali_t1 + np_cuanti_t1
+            # ── Realizadas del programa (excluye ESTADOS_FUERA) ──────────────
+            mask_real_c = (df_cuali['Estado Cualitativa'].str.startswith('Realizada', na=False) &
+                           ~df_cuali['Estado Cualitativa'].isin(ESTADOS_FUERA))
+            mask_real_q = (df_cuanti['Estado Cuantitativa'].str.startswith('Realizada', na=False) &
+                           ~df_cuanti['Estado Cuantitativa'].isin(ESTADOS_FUERA))
+            rc_prog_t1 = int(mask_real_c.sum())
+            rq_prog_t1 = int(mask_real_q.sum())
 
-            # Realizadas DEL programa (excluye las fuera)
-            rc_prog_t1 = rc_t1 - np_cuali_t1
-            rq_prog_t1 = rq_t1 - np_cuanti_t1
+            # ── Realizadas fuera del programa ────────────────────────────────
+            rc_fuera_t1  = int(df_cuali['Estado Cualitativa'].isin(ESTADOS_FUERA).sum())
+            rq_fuera_t1  = int(df_cuanti['Estado Cuantitativa'].isin(ESTADOS_FUERA).sum())
+            rt_total_t1  = rc_prog_t1 + rq_prog_t1 + rc_fuera_t1 + rq_fuera_t1
 
-            pa_t1 = int((df_seg['Estado Cualitativa'] == 'Pendiente atrasada').sum())
-            es_plag_t1 = ('Programa' in df_seg.columns and
-                          any('PLAGUICIDAS' in str(p).upper() for p in df_seg['Programa'].unique()))
+            # ── Atrasadas ────────────────────────────────────────────────────
+            pa_t1 = int((df_cuali['Estado Cualitativa'] == 'Pendiente atrasada').sum())
+
+            es_plag_t1 = protocolo != 'Todos' and es_protocolo_plaguicidas(protocolo)
             if es_plag_t1:
-                id_col = 'Identificador único (ID) centro de trabajo (CT)'
-                pt_t1 = int(df_seg[id_col].nunique())
-                rt_t1 = int(df_seg[df_seg['Estado Cualitativa'].str.startswith('Realizada', na=False)][id_col].nunique())
+                id_col_p  = 'Identificador único (ID) centro de trabajo (CT)'
+                pt_t1     = int(df_filtrado[id_col_p].nunique())
+                rt_t1     = int(df_filtrado[mask_real_c.reindex(df_filtrado.index, fill_value=False)][id_col_p].nunique())
+                pend_cuali_t1 = pend_cuanti_t1 = None
             else:
-                # Denominador: sólo filas con estado programado (excluye ESTADOS_FUERA)
-                pc_t1 = int((df_seg['Estado Cualitativa'].notna() &
-                             (~df_seg['Estado Cualitativa'].isin(ESTADOS_FUERA))).sum())
-                pq_t1 = int((df_seg['Estado Cuantitativa'].notna() &
-                             (~df_seg['Estado Cuantitativa'].isin(ESTADOS_FUERA))).sum()) if 'Estado Cuantitativa' in df_seg.columns else 0
-                pt_t1 = pc_t1 + pq_t1
-                # rt_t1 para % avance = sólo realizadas del programa (no infla el porcentaje)
-                rt_t1 = rc_prog_t1 + rq_prog_t1
+                # Denominadores = filas de df_filtrado por tipo (misma fuente que la tabla)
+                pt_t1          = cuali_count + cuanti_count
+                rt_t1          = rc_prog_t1 + rq_prog_t1
+                pend_cuali_t1  = cuali_count - rc_prog_t1
+                pend_cuanti_t1 = cuanti_count - rq_prog_t1
+
             pct_t1  = round(rt_t1 / pt_t1 * 100, 1) if pt_t1 > 0 else 0
             pend_t1 = pt_t1 - rt_t1
-
-            # Pendientes por tipo (corregidos: sólo descontamos las del programa)
-            if not es_plag_t1:
-                pend_cuali_t1  = pc_t1 - rc_prog_t1
-                pend_cuanti_t1 = pq_t1 - rq_prog_t1
-                pa_cuanti_t1   = int((df_seg['Estado Cuantitativa'] == 'Pendiente atrasada').sum()) if 'Estado Cuantitativa' in df_seg.columns else 0
-            else:
-                pend_cuali_t1 = pend_cuanti_t1 = pa_cuanti_t1 = None
 
             st.markdown("##### ✅ Avance del seguimiento")
             a1, a2, a3, a4 = st.columns(4)
@@ -1116,12 +1133,11 @@ try:
             st.markdown("---")
 
         # ── Programación mensual vs realizado ───────────────────────────────
-        fig_barras = grafico_programado_vs_realizado(df_filtrado, df_seg if not df_seg.empty else None, protocolo)
+        fig_barras = grafico_programado_vs_realizado(df_filtrado, protocolo)
         if fig_barras:
             st.plotly_chart(fig_barras, use_container_width=True)
             with st.expander("📋 Ver Detalle de Evaluaciones", expanded=True):
-                mostrar_resumen_detallado(df_filtrado, protocolo, seccion='tab1',
-                                          df_seg=df_seg if not df_seg.empty else None)
+                mostrar_resumen_detallado(df_filtrado, protocolo, seccion='tab1')
         else:
             st.warning("No hay datos para mostrar con los filtros seleccionados")
 
