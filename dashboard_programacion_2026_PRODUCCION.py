@@ -1053,14 +1053,19 @@ try:
             # "Realizada - No programada"   → no estaba en la programación (filas VS(2))
             ESTADOS_FUERA = {'Realizada fuera de programa', 'Realizada - No programada'}
 
-            # Realizadas (incluye todas las variantes de "Realizada*")
+            # Realizadas totales (todas las variantes de "Realizada*", incluye fuera del programa)
             rc_t1 = int(df_seg['Estado Cualitativa'].str.startswith('Realizada', na=False).sum())
             rq_t1 = int(df_seg['Estado Cuantitativa'].str.startswith('Realizada', na=False).sum()) if 'Estado Cuantitativa' in df_seg.columns else 0
+            rt_total_t1 = rc_t1 + rq_t1   # titular "Realizadas" = total incluyendo fuera
 
-            # Conteo interno: evaluaciones realizadas que NO estaban en la programación oficial
+            # Fuera del programa (sin fecha asignada o no incluidas)
             np_cuali_t1  = int(df_seg['Estado Cualitativa'].isin(ESTADOS_FUERA).sum())
             np_cuanti_t1 = int(df_seg['Estado Cuantitativa'].isin(ESTADOS_FUERA).sum()) if 'Estado Cuantitativa' in df_seg.columns else 0
             np_total_t1  = np_cuali_t1 + np_cuanti_t1
+
+            # Realizadas DEL programa (excluye las fuera)
+            rc_prog_t1 = rc_t1 - np_cuali_t1
+            rq_prog_t1 = rq_t1 - np_cuanti_t1
 
             pa_t1 = int((df_seg['Estado Cualitativa'] == 'Pendiente atrasada').sum())
             es_plag_t1 = ('Programa' in df_seg.columns and
@@ -1070,48 +1075,44 @@ try:
                 pt_t1 = int(df_seg[id_col].nunique())
                 rt_t1 = int(df_seg[df_seg['Estado Cualitativa'].str.startswith('Realizada', na=False)][id_col].nunique())
             else:
-                # Denominador: sólo filas con estado programado (excluye fuera de programa y no programadas)
+                # Denominador: sólo filas con estado programado (excluye ESTADOS_FUERA)
                 pc_t1 = int((df_seg['Estado Cualitativa'].notna() &
                              (~df_seg['Estado Cualitativa'].isin(ESTADOS_FUERA))).sum())
                 pq_t1 = int((df_seg['Estado Cuantitativa'].notna() &
                              (~df_seg['Estado Cuantitativa'].isin(ESTADOS_FUERA))).sum()) if 'Estado Cuantitativa' in df_seg.columns else 0
                 pt_t1 = pc_t1 + pq_t1
-                rt_t1 = rc_t1 + rq_t1
+                # rt_t1 para % avance = sólo realizadas del programa (no infla el porcentaje)
+                rt_t1 = rc_prog_t1 + rq_prog_t1
             pct_t1  = round(rt_t1 / pt_t1 * 100, 1) if pt_t1 > 0 else 0
             pend_t1 = pt_t1 - rt_t1
 
-            # Pendientes por tipo (sólo disponible fuera del modo Plaguicidas)
+            # Pendientes por tipo (corregidos: sólo descontamos las del programa)
             if not es_plag_t1:
-                pend_cuali_t1  = pc_t1 - rc_t1
-                pend_cuanti_t1 = pq_t1 - rq_t1
+                pend_cuali_t1  = pc_t1 - rc_prog_t1
+                pend_cuanti_t1 = pq_t1 - rq_prog_t1
                 pa_cuanti_t1   = int((df_seg['Estado Cuantitativa'] == 'Pendiente atrasada').sum()) if 'Estado Cuantitativa' in df_seg.columns else 0
             else:
                 pend_cuali_t1 = pend_cuanti_t1 = pa_cuanti_t1 = None
 
             st.markdown("##### ✅ Avance del seguimiento")
             a1, a2, a3, a4 = st.columns(4)
-            a1.metric("Realizadas",               f"{rt_t1:,}")
-            a2.metric("Cualitativas realizadas",  f"{rc_t1:,}",  f"de {cuali_count:,} programadas")
-            a3.metric("Cuantitativas realizadas", f"{rq_t1:,}",  f"de {cuanti_count:,} programadas")
-            a4.metric("% Avance",                 f"{pct_t1}%")
+            a1.metric("Realizadas", f"{rt_total_t1:,}")
+            with a2:
+                st.metric("Cuali. del programa",       f"{rc_prog_t1:,}", f"de {cuali_count:,} programadas")
+                if np_cuali_t1 > 0:
+                    st.metric("Cuali. fuera del programa", f"{np_cuali_t1:,}")
+            with a3:
+                st.metric("Cuanti. del programa",      f"{rq_prog_t1:,}", f"de {cuanti_count:,} programadas")
+                if np_cuanti_t1 > 0:
+                    st.metric("Cuanti. fuera del programa", f"{np_cuanti_t1:,}")
+            a4.metric("% Avance", f"{pct_t1}%")
             st.progress(pct_t1 / 100)
 
             b1, b2, b3, b4 = st.columns(4)
-            b1.metric("Pendientes",               f"{pend_t1:,}",                                          delta_color="inverse")
-            b2.metric("Cuali. pendientes",         f"{pend_cuali_t1:,}"  if pend_cuali_t1  is not None else "—", delta_color="inverse")
-            b3.metric("Cuanti. pendientes",        f"{pend_cuanti_t1:,}" if pend_cuanti_t1 is not None else "—", delta_color="inverse")
-            b4.metric("Atrasadas",                 f"{pa_t1:,}",                                           delta_color="inverse")
-
-            # Conteo interno: evaluaciones realizadas fuera de la programación oficial
-            if np_total_t1 > 0:
-                partes = []
-                if np_cuali_t1  > 0: partes.append(f"{np_cuali_t1:,} cuali.")
-                if np_cuanti_t1 > 0: partes.append(f"{np_cuanti_t1:,} cuanti.")
-                st.caption(
-                    f"ℹ️ Las realizadas incluyen **{np_total_t1:,}** evaluaciones fuera de la "
-                    f"programación oficial ({' / '.join(partes)}): "
-                    f"sin fecha asignada o no incluidas en el programa."
-                )
+            b1.metric("Pendientes",        f"{pend_t1:,}",                                            delta_color="inverse")
+            b2.metric("Cuali. pendientes", f"{pend_cuali_t1:,}"  if pend_cuali_t1  is not None else "—", delta_color="inverse")
+            b3.metric("Cuanti. pendientes",f"{pend_cuanti_t1:,}" if pend_cuanti_t1 is not None else "—", delta_color="inverse")
+            b4.metric("Atrasadas",         f"{pa_t1:,}",                                             delta_color="inverse")
             st.markdown("---")
 
         # ── Programación mensual vs realizado ───────────────────────────────
