@@ -1170,19 +1170,71 @@ try:
             f3.metric("Cuantitativas", f"{fp_cuanti:,}")
             st.markdown("---")
 
-            _fp_cols = [c for c in [
-                'Region Sucursal', 'Nombre Empleador',
-                _id_col_tab, 'Protocolo',
-                'AGENTE' if 'AGENTE' in df_fuera_prog.columns else 'Agente',
-                'Estado Cualitativa', 'Fecha de Evaluación Cualitativa 2026',
-                'Estado Cuantitativa', 'Fecha de Evaluación Cuantitativa 2026',
-            ] if c in df_fuera_prog.columns]
+            # Columnas equivalentes a "Listado Completo de Evaluaciones"
+            # df_fuera_prog viene de df_seg_raw → nombres distintos en algunos campos
+            df_fp = df_fuera_prog.copy()
 
-            df_fp_show = df_fuera_prog[_fp_cols].copy()
-            for col in ['Fecha de Evaluación Cualitativa 2026', 'Fecha de Evaluación Cuantitativa 2026']:
+            # Fecha real: coalesce cuali → cuanti (sustituto de fecha programada)
+            col_fc_fp = 'Fecha de Evaluación Cualitativa 2026'
+            col_fq_fp = 'Fecha de Evaluación Cuantitativa 2026'
+            if col_fc_fp in df_fp.columns and col_fq_fp in df_fp.columns:
+                df_fp['_fecha_real'] = df_fp[col_fc_fp].fillna(df_fp[col_fq_fp])
+            elif col_fc_fp in df_fp.columns:
+                df_fp['_fecha_real'] = df_fp[col_fc_fp]
+            elif col_fq_fp in df_fp.columns:
+                df_fp['_fecha_real'] = df_fp[col_fq_fp]
+            else:
+                df_fp['_fecha_real'] = pd.NaT
+
+            # Tipo derivado del estado
+            def _tipo_fuera(row):
+                ec = str(row.get('Estado Cualitativa', '') or '')
+                eq = str(row.get('Estado Cuantitativa', '') or '')
+                if ec in ESTADOS_FUERA and eq in ESTADOS_FUERA:
+                    return 'Cualitativa / Cuantitativa'
+                elif ec in ESTADOS_FUERA:
+                    return 'Cualitativa'
+                elif eq in ESTADOS_FUERA:
+                    return 'Cuantitativa'
+                return 'Desconocido'
+            df_fp['_tipo'] = df_fp.apply(_tipo_fuera, axis=1)
+
+            # Mapeo de columnas: (col_en_df_seg_raw, nombre_display)
+            # Mismo orden que Listado Completo de Evaluaciones
+            _agente_col = 'AGENTE' if 'AGENTE' in df_fp.columns else 'Agente'
+            _ger_col    = 'Gerencia - Cuentas Nacionales' if 'Gerencia - Cuentas Nacionales' in df_fp.columns else 'Gerencia'
+            _nom_col    = 'Nombre Empleador' if 'Nombre Empleador' in df_fp.columns else 'Nombre empleador'
+            _rut_col    = 'RUT Empleador o Rut trabajador(a)' if 'RUT Empleador o Rut trabajador(a)' in df_fp.columns else 'Rut Empleador o Rut trabajador(a)'
+
+            _col_map = [
+                ('_fecha_real',   'Fecha real'),
+                ('_tipo',         'Tipo'),
+                (_ger_col,        'Gerente'),
+                ('Region Sucursal','Región'),
+                (_rut_col,        'Rut Empleador o Rut trabajador(a)'),
+                (_nom_col,        'Nombre empleador'),
+                (_id_col_tab,     'Identificador único (ID) centro de trabajo (CT)'),
+                (_agente_col,     'Agente'),
+                ('Protocolo',     'Protocolo'),
+                ('Comuna CT',     'Comuna'),
+                ('Nivel de Riesgo','Nivel de Riesgo'),
+                ('AnexoSUSESO',   'Anexo SUSESO'),
+                ('Estado Cualitativa',               'Estado Cuali.'),
+                (col_fc_fp,                          'Fecha real Cuali.'),
+                ('Estado Cuantitativa',              'Estado Cuanti.'),
+                (col_fq_fp,                          'Fecha real Cuanti.'),
+            ]
+            _src_cols  = [s for s, _ in _col_map if s in df_fp.columns]
+            _disp_cols = [d for s, d in _col_map if s in df_fp.columns]
+
+            df_fp_show = df_fp[_src_cols].copy()
+            df_fp_show.columns = _disp_cols
+
+            for col in ['Fecha real', 'Fecha real Cuali.', 'Fecha real Cuanti.']:
                 if col in df_fp_show.columns and pd.api.types.is_datetime64_any_dtype(df_fp_show[col]):
                     df_fp_show[col] = df_fp_show[col].dt.strftime('%d-%m-%Y')
 
+            df_fp_show = df_fp_show.sort_values('Fecha real', na_position='last')
             st.dataframe(df_fp_show, use_container_width=True, height=450, hide_index=True)
 
             buf = io.BytesIO()
