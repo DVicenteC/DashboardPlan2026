@@ -858,6 +858,15 @@ try:
     if len(df_maestro) == 0:
         st.error("❌ No hay datos válidos para mostrar. Verifica el archivo de entrada.")
         st.stop()
+
+    # Fecha de corte del seguimiento
+    _fc = df_seg_raw['_FechaCorte'].iloc[0] if '_FechaCorte' in df_seg_raw.columns and not df_seg_raw.empty else None
+    if _fc:
+        try:
+            _fecha_corte = pd.to_datetime(str(_fc), dayfirst=True, errors='coerce').strftime("%d/%m/%Y")
+        except Exception:
+            _fecha_corte = str(_fc)
+        st.caption(f"IST · Especialidades Técnicas | Datos al: {_fecha_corte}")
     
     # ── Sidebar — Filtros Bidireccionales (Cross-filtering) ──────────────────
     # Cada filtro muestra sólo las opciones compatibles con TODOS los demás
