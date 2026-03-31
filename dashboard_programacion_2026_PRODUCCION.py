@@ -896,6 +896,16 @@ try:
     # filtros activos. La actualización es inmediata en un solo click.
     st.sidebar.header("🔍 Filtros")
 
+    # Toggle EP — arriba del sidebar, antes de los filtros
+    _ep_disponible_sidebar = 'EP_Total' in df_maestro.columns
+    solo_ep = st.sidebar.toggle(
+        "🚨 Ver solo centros con denuncias de EP",
+        value=False,
+        disabled=not _ep_disponible_sidebar,
+        help="Filtra el programa mostrando solo centros con historial de EP (2019-2025)"
+    )
+    st.sidebar.markdown("---")
+
     _base = df_maestro  # dataset unificado (programación + seguimiento), nunca se modifica
 
     # ── 1. Defaults e inicialización de session_state ─────────────────────────
@@ -1057,15 +1067,6 @@ try:
         st.session_state['_ho_reset'] = True
         st.rerun()
 
-    # Filtro EP
-    st.sidebar.markdown("---")
-    _ep_disponible_sidebar = 'EP_Total' in df_filtrado.columns
-    solo_ep = st.sidebar.toggle(
-        "🚨 Ver solo centros con denuncias de EP",
-        value=False,
-        disabled=not _ep_disponible_sidebar,
-        help="Filtra el programa mostrando solo centros con historial de EP (2019-2025)"
-    )
     if solo_ep and _ep_disponible_sidebar:
         df_filtrado = df_filtrado[
             pd.to_numeric(df_filtrado['EP_Total'], errors='coerce').fillna(0) > 0
@@ -1361,29 +1362,14 @@ try:
             mc2.metric("Total casos EP (2019-2025)", f"{_total_casos:,}")
             mc3.metric("Agente más frecuente", _agente_max)
 
-            # ── Tabla resumen por empresa ──────────────────────────────────
-            with st.expander("📊 Resumen por empresa (conteos)", expanded=True):
-                _agente_sel_pivot = st.selectbox(
-                    "Filtrar por agente",
-                    ["Todos", "Hipoacusia", "Silicosis", "Metales", "Plaguicidas"],
-                    key="ep_agente_pivot"
-                )
-                if _agente_sel_pivot != "Todos":
-                    _col_filtro = f'EP_{_agente_sel_pivot}'
-                    df_ep_show = df_ep_pivot_tab[df_ep_pivot_tab[_col_filtro] > 0].sort_values(_col_filtro, ascending=False).reset_index(drop=True)
-                else:
-                    df_ep_show = df_ep_pivot_tab.copy()
-                st.dataframe(df_ep_show, use_container_width=True, height=350, hide_index=True)
-
             # ── Explorador interactivo de casos ────────────────────────────
-            st.markdown("---")
             st.subheader("🔍 Explorador de casos EP")
 
             if not _ep_detalle_ok:
                 st.info("El detalle de casos no está disponible aún. Se generará en la próxima ejecución del procesador.")
             else:
-                _empresas_det  = sorted(df_ep_detalle['RAZON SOCIAL'].dropna().unique().tolist())
-                _agentes_det   = ['Todos'] + sorted(df_ep_detalle['Agente de Riesgo'].dropna().unique().tolist())
+                _empresas_det = ['Todos'] + sorted(df_ep_detalle['RAZON SOCIAL'].dropna().unique().tolist())
+                _agentes_det  = ['Todos'] + sorted(df_ep_detalle['Agente de Riesgo'].dropna().unique().tolist())
 
                 ecol1, ecol2, ecol3 = st.columns([2, 2, 1])
                 with ecol1:
@@ -1392,22 +1378,25 @@ try:
                     _emp_sel = st.selectbox("Empresa", _emp_opciones if _emp_opciones else _empresas_det, key="ep_empresa")
 
                 with ecol2:
-                    _suc_opciones = ['Todas'] + sorted(
-                        df_ep_detalle[df_ep_detalle['RAZON SOCIAL'] == _emp_sel]['F.GLS_NOM_SUC'].dropna().unique().tolist()
-                    )
+                    if _emp_sel == 'Todos':
+                        _suc_opciones = ['Todas']
+                    else:
+                        _suc_opciones = ['Todas'] + sorted(
+                            df_ep_detalle[df_ep_detalle['RAZON SOCIAL'] == _emp_sel]['F.GLS_NOM_SUC'].dropna().unique().tolist()
+                        )
                     _suc_sel = st.selectbox("Sucursal", _suc_opciones, key="ep_sucursal")
 
                 with ecol3:
                     _agente_det_sel = st.selectbox("Agente de Riesgo", _agentes_det, key="ep_agente_det")
 
                 # Aplicar filtros al detalle
-                _filtro = df_ep_detalle[df_ep_detalle['RAZON SOCIAL'] == _emp_sel].copy()
+                _filtro = df_ep_detalle.copy() if _emp_sel == 'Todos' else df_ep_detalle[df_ep_detalle['RAZON SOCIAL'] == _emp_sel].copy()
                 if _suc_sel != 'Todas':
                     _filtro = _filtro[_filtro['F.GLS_NOM_SUC'] == _suc_sel]
                 if _agente_det_sel != 'Todos':
                     _filtro = _filtro[_filtro['Agente de Riesgo'] == _agente_det_sel]
 
-                st.caption(f"{_emp_sel} | Sucursal: {_suc_sel} | **{len(_filtro)} casos encontrados**")
+                st.caption(f"Empresa: {_emp_sel} | Sucursal: {_suc_sel} | **{len(_filtro):,} casos encontrados**")
 
                 _cols_show = [c for c in [
                     'RAZON SOCIAL', 'F.GLS_NOM_SUC', 'PERIODO', 'Agente de Riesgo',
@@ -1415,6 +1404,35 @@ try:
                     'Descripcion NATURALEZA LESION', 'DIAGNOSTICO ALTA'
                 ] if c in _filtro.columns]
                 st.dataframe(_filtro[_cols_show].reset_index(drop=True), use_container_width=True, height=400, hide_index=True)
+
+            # ── Tabla resumen por empresa ──────────────────────────────────
+            st.markdown("---")
+            with st.expander("📊 Resumen por empresa (conteos)", expanded=False):
+                # Incluir RAZON SOCIAL y F.GLS_NOM_SUC en la tabla resumen
+                _seg_razon_col = 'Nombre empleador'
+                _seg_suc_col   = 'NOMBRE SUCURSAL'
+                _extra_cols    = [c for c in [_seg_razon_col, _seg_suc_col] if c in df_seg_raw.columns]
+                _pivot_cols    = _extra_cols + _EP_COLS
+
+                df_ep_pivot_show = (
+                    df_seg_raw[[_id_col] + _pivot_cols]
+                    .drop_duplicates(subset=[_id_col])
+                    .query('EP_Total > 0')
+                    .sort_values('EP_Total', ascending=False)
+                    .reset_index(drop=True)
+                ) if _id_col in df_seg_raw.columns else df_ep_pivot_tab.copy()
+
+                _agente_sel_pivot = st.selectbox(
+                    "Filtrar por agente",
+                    ["Todos", "Hipoacusia", "Silicosis", "Metales", "Plaguicidas"],
+                    key="ep_agente_pivot"
+                )
+                if _agente_sel_pivot != "Todos":
+                    _col_filtro   = f'EP_{_agente_sel_pivot}'
+                    df_ep_show    = df_ep_pivot_show[df_ep_pivot_show[_col_filtro] > 0].sort_values(_col_filtro, ascending=False).reset_index(drop=True)
+                else:
+                    df_ep_show = df_ep_pivot_show.copy()
+                st.dataframe(df_ep_show, use_container_width=True, height=400, hide_index=True)
 
             st.caption(
                 "Fuente: Reporte EP 2019-2025. "
