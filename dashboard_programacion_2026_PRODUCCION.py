@@ -1326,23 +1326,30 @@ try:
 
     with tab4:
         _EP_COLS = ['EP_Hipoacusia', 'EP_Silicosis', 'EP_Metales', 'EP_Plaguicidas', 'EP_Total']
-        _ep_pivot_ok   = all(c in df_seg_raw.columns for c in _EP_COLS) and not df_seg_raw.empty
-        _ep_detalle_ok = not df_ep_detalle.empty and 'Agente de Riesgo' in df_ep_detalle.columns
+        _id_col  = 'Identificador único (ID) centro de trabajo (CT)'
+        _ep_pivot_ok   = all(c in df_filtrado.columns for c in _EP_COLS) and not df_filtrado.empty
+        _ep_detalle_ok = not df_ep_detalle.empty and 'Agente de Riesgo' in df_ep_detalle.columns and 'ID-CT' in df_ep_detalle.columns
 
         if not _ep_pivot_ok:
             st.info("Los datos de EP no están disponibles aún. Ejecuta el procesador HO para enriquecer el seguimiento con historial de EP.")
         else:
-            _id_col  = 'Identificador único (ID) centro de trabajo (CT)'
+            # IDs presentes en el programa con los filtros actuales del sidebar
+            _ids_programa = set(
+                df_filtrado[_id_col].str.strip().str.upper().dropna()
+            ) if _id_col in df_filtrado.columns else set()
+
+            # Convertir columnas EP a numérico
+            for col in _EP_COLS:
+                df_filtrado[col] = pd.to_numeric(df_filtrado[col], errors='coerce').fillna(0).astype(int)
+
+            # Pivot basado en df_filtrado (respeta filtros del sidebar)
             _emp_col = 'Nombre empleador'
             _suc_col = 'NOMBRE SUCURSAL'
             _reg_col = 'Region Sucursal'
-            _id_cols = [c for c in [_id_col, _emp_col, _suc_col, _reg_col] if c in df_seg_raw.columns]
-
-            for col in _EP_COLS:
-                df_seg_raw[col] = pd.to_numeric(df_seg_raw[col], errors='coerce').fillna(0).astype(int)
+            _id_cols = [c for c in [_id_col, _emp_col, _suc_col, _reg_col] if c in df_filtrado.columns]
 
             df_ep_pivot_tab = (
-                df_seg_raw[_id_cols + _EP_COLS]
+                df_filtrado[_id_cols + _EP_COLS]
                 .drop_duplicates(subset=[_id_col] if _id_col in _id_cols else _id_cols[:1])
                 .query('EP_Total > 0')
                 .sort_values('EP_Total', ascending=False)
@@ -1350,12 +1357,12 @@ try:
             )
 
             # ── Métricas ───────────────────────────────────────────────────
-            _total_empresas = df_ep_pivot_tab[_id_col].nunique() if _id_col in df_ep_pivot_tab.columns else len(df_ep_pivot_tab)
+            _total_empresas = len(df_ep_pivot_tab)
             _total_casos    = int(df_ep_pivot_tab['EP_Total'].sum())
             _agente_max     = max(
                 ['EP_Hipoacusia', 'EP_Silicosis', 'EP_Metales', 'EP_Plaguicidas'],
                 key=lambda c: df_ep_pivot_tab[c].sum()
-            ).replace('EP_', '')
+            ).replace('EP_', '') if _total_casos > 0 else '—'
 
             mc1, mc2, mc3 = st.columns(3)
             mc1.metric("Empresas con EP en programa", _total_empresas)
@@ -1368,8 +1375,13 @@ try:
             if not _ep_detalle_ok:
                 st.info("El detalle de casos no está disponible aún. Se generará en la próxima ejecución del procesador.")
             else:
-                _empresas_det = ['Todos'] + sorted(df_ep_detalle['RAZON SOCIAL'].dropna().unique().tolist())
-                _agentes_det  = ['Todos'] + sorted(df_ep_detalle['Agente de Riesgo'].dropna().unique().tolist())
+                # Restringir detalle a ID-CTs del programa actual (con filtros del sidebar)
+                _det = df_ep_detalle[
+                    df_ep_detalle['ID-CT'].str.strip().str.upper().isin(_ids_programa)
+                ].copy() if _ids_programa else df_ep_detalle.copy()
+
+                _empresas_det = ['Todos'] + sorted(_det['RAZON SOCIAL'].dropna().unique().tolist())
+                _agentes_det  = ['Todos'] + sorted(_det['Agente de Riesgo'].dropna().unique().tolist())
 
                 ecol1, ecol2, ecol3 = st.columns([2, 2, 1])
                 with ecol1:
@@ -1382,56 +1394,42 @@ try:
                         _suc_opciones = ['Todas']
                     else:
                         _suc_opciones = ['Todas'] + sorted(
-                            df_ep_detalle[df_ep_detalle['RAZON SOCIAL'] == _emp_sel]['F.GLS_NOM_SUC'].dropna().unique().tolist()
+                            _det[_det['RAZON SOCIAL'] == _emp_sel]['F.GLS_NOM_SUC'].dropna().unique().tolist()
                         )
                     _suc_sel = st.selectbox("Sucursal", _suc_opciones, key="ep_sucursal")
 
                 with ecol3:
                     _agente_det_sel = st.selectbox("Agente de Riesgo", _agentes_det, key="ep_agente_det")
 
-                # Aplicar filtros al detalle
-                _filtro = df_ep_detalle.copy() if _emp_sel == 'Todos' else df_ep_detalle[df_ep_detalle['RAZON SOCIAL'] == _emp_sel].copy()
+                # Aplicar filtros al detalle restringido
+                _filtro_det = _det.copy() if _emp_sel == 'Todos' else _det[_det['RAZON SOCIAL'] == _emp_sel].copy()
                 if _suc_sel != 'Todas':
-                    _filtro = _filtro[_filtro['F.GLS_NOM_SUC'] == _suc_sel]
+                    _filtro_det = _filtro_det[_filtro_det['F.GLS_NOM_SUC'] == _suc_sel]
                 if _agente_det_sel != 'Todos':
-                    _filtro = _filtro[_filtro['Agente de Riesgo'] == _agente_det_sel]
+                    _filtro_det = _filtro_det[_filtro_det['Agente de Riesgo'] == _agente_det_sel]
 
-                st.caption(f"Empresa: {_emp_sel} | Sucursal: {_suc_sel} | **{len(_filtro):,} casos encontrados**")
+                st.caption(f"Empresa: {_emp_sel} | Sucursal: {_suc_sel} | **{len(_filtro_det):,} casos encontrados**")
 
                 _cols_show = [c for c in [
                     'RAZON SOCIAL', 'F.GLS_NOM_SUC', 'PERIODO', 'Agente de Riesgo',
                     'Descripcion CAUSAL CONSULTA', 'Circunstancia',
                     'Descripcion NATURALEZA LESION', 'DIAGNOSTICO ALTA'
-                ] if c in _filtro.columns]
-                st.dataframe(_filtro[_cols_show].reset_index(drop=True), use_container_width=True, height=400, hide_index=True)
+                ] if c in _filtro_det.columns]
+                st.dataframe(_filtro_det[_cols_show].reset_index(drop=True), use_container_width=True, height=400, hide_index=True)
 
             # ── Tabla resumen por empresa ──────────────────────────────────
             st.markdown("---")
             with st.expander("📊 Resumen por empresa (conteos)", expanded=False):
-                # Incluir RAZON SOCIAL y F.GLS_NOM_SUC en la tabla resumen
-                _seg_razon_col = 'Nombre empleador'
-                _seg_suc_col   = 'NOMBRE SUCURSAL'
-                _extra_cols    = [c for c in [_seg_razon_col, _seg_suc_col] if c in df_seg_raw.columns]
-                _pivot_cols    = _extra_cols + _EP_COLS
-
-                df_ep_pivot_show = (
-                    df_seg_raw[[_id_col] + _pivot_cols]
-                    .drop_duplicates(subset=[_id_col])
-                    .query('EP_Total > 0')
-                    .sort_values('EP_Total', ascending=False)
-                    .reset_index(drop=True)
-                ) if _id_col in df_seg_raw.columns else df_ep_pivot_tab.copy()
-
                 _agente_sel_pivot = st.selectbox(
                     "Filtrar por agente",
                     ["Todos", "Hipoacusia", "Silicosis", "Metales", "Plaguicidas"],
                     key="ep_agente_pivot"
                 )
                 if _agente_sel_pivot != "Todos":
-                    _col_filtro   = f'EP_{_agente_sel_pivot}'
-                    df_ep_show    = df_ep_pivot_show[df_ep_pivot_show[_col_filtro] > 0].sort_values(_col_filtro, ascending=False).reset_index(drop=True)
+                    _col_filtro = f'EP_{_agente_sel_pivot}'
+                    df_ep_show  = df_ep_pivot_tab[df_ep_pivot_tab[_col_filtro] > 0].sort_values(_col_filtro, ascending=False).reset_index(drop=True)
                 else:
-                    df_ep_show = df_ep_pivot_show.copy()
+                    df_ep_show = df_ep_pivot_tab.copy()
                 st.dataframe(df_ep_show, use_container_width=True, height=400, hide_index=True)
 
             st.caption(
