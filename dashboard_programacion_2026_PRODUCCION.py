@@ -1089,8 +1089,8 @@ try:
     else:
         df_fuera_prog = pd.DataFrame()
 
-    tab1, tab2, tab3 = st.tabs([
-        "📊 Programación y Avance", "📋 Fuera de Programa", "🏥 Vigilancia de Salud"
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "📊 Programación y Avance", "📋 Fuera de Programa", "🏥 Vigilancia de Salud", "🔬 Denuncias EP"
     ])
 
     with tab1:
@@ -1285,6 +1285,66 @@ try:
                 st.dataframe(df_vs_show, use_container_width=True, height=400, hide_index=True)
             else:
                 st.info("No hay registros de Vigilancia de Salud en el seguimiento.")
+
+    with tab4:
+        _EP_COLS = ['EP_Hipoacusia', 'EP_Silicosis', 'EP_Metales', 'EP_Plaguicidas', 'EP_Total']
+        _ep_disponible = all(c in df_seg_raw.columns for c in _EP_COLS) and not df_seg_raw.empty
+
+        if not _ep_disponible:
+            st.info("Los datos de EP no están disponibles aún. Ejecuta el procesador HO para enriquecer el seguimiento con historial de EP.")
+        else:
+            # Construir tabla única por empresa (un ID-CT puede aparecer varias veces en el seguimiento)
+            _id_col = 'Identificador único (ID) centro de trabajo (CT)'
+            _emp_col = 'Nombre empleador'
+            _suc_col = 'NOMBRE SUCURSAL'
+            _reg_col = 'Region Sucursal'
+
+            # Columnas de identidad disponibles
+            _id_cols_disponibles = [c for c in [_id_col, _emp_col, _suc_col, _reg_col] if c in df_seg_raw.columns]
+
+            for col in _EP_COLS:
+                df_seg_raw[col] = pd.to_numeric(df_seg_raw[col], errors='coerce').fillna(0).astype(int)
+
+            df_ep_tab = (
+                df_seg_raw[_id_cols_disponibles + _EP_COLS]
+                .drop_duplicates(subset=[_id_col] if _id_col in _id_cols_disponibles else _id_cols_disponibles[:1])
+                .query('EP_Total > 0')
+                .sort_values('EP_Total', ascending=False)
+                .reset_index(drop=True)
+            )
+
+            # ── Métricas ───────────────────────────────────────────────────
+            _total_empresas = df_ep_tab[_id_col].nunique() if _id_col in df_ep_tab.columns else len(df_ep_tab)
+            _total_casos    = int(df_ep_tab['EP_Total'].sum())
+            _agente_max     = max(
+                ['EP_Hipoacusia', 'EP_Silicosis', 'EP_Metales', 'EP_Plaguicidas'],
+                key=lambda c: df_ep_tab[c].sum()
+            ).replace('EP_', '')
+
+            mc1, mc2, mc3 = st.columns(3)
+            mc1.metric("Empresas con EP en programa", _total_empresas)
+            mc2.metric("Total casos EP (2019-2025)", f"{_total_casos:,}")
+            mc3.metric("Agente más frecuente", _agente_max)
+
+            # ── Filtro por agente ──────────────────────────────────────────
+            _agente_sel = st.selectbox(
+                "Filtrar por agente",
+                ["Todos", "Hipoacusia", "Silicosis", "Metales", "Plaguicidas"],
+                key="ep_agente_sel"
+            )
+            if _agente_sel != "Todos":
+                df_ep_show = df_ep_tab[df_ep_tab[f'EP_{_agente_sel}'] > 0].copy()
+                df_ep_show = df_ep_show.sort_values(f'EP_{_agente_sel}', ascending=False).reset_index(drop=True)
+            else:
+                df_ep_show = df_ep_tab.copy()
+
+            # ── Tabla ──────────────────────────────────────────────────────
+            st.dataframe(df_ep_show, use_container_width=True, height=500, hide_index=True)
+            st.caption(
+                f"Fuente: Reporte EP 2019-2025. "
+                f"Los casos corresponden al período histórico completo, no solo 2026. "
+                f"Solo se muestran empresas del programa HO actual con EP_Total > 0."
+            )
 
     st.markdown("---")
     st.caption("Versión Producción - Preparado por Diego Vicente Contreras")
