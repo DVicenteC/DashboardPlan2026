@@ -262,6 +262,27 @@ def cargar_datos_seguimiento():
         return pd.DataFrame()
 
 
+@st.cache_data(ttl=300)
+def cargar_datos_ep_detalle():
+    """Carga registros individuales de EP desde la hoja 'EP Detalle' del spreadsheet.
+    Usa URL gviz (por nombre de hoja) para no necesitar gid en secrets.toml.
+    Soft-fail: retorna DataFrame vacío si la hoja no existe aún."""
+    try:
+        url_sheet = st.secrets["gsheets"]["url"]
+        match_id  = re.search(r'/d/([a-zA-Z0-9_-]+)', url_sheet)
+        if not match_id:
+            return pd.DataFrame()
+        sid        = match_id.group(1)
+        export_url = f"https://docs.google.com/spreadsheets/d/{sid}/gviz/tq?tqx=out:csv&sheet=EP%20Detalle"
+        df = pd.read_csv(export_url, dtype=str)
+        if df.empty or len(df.columns) < 3:
+            return pd.DataFrame()
+        df.columns = df.columns.str.strip()
+        return df
+    except Exception:
+        return pd.DataFrame()
+
+
 @st.cache_data
 def preparar_datos_eventos(df):
     """Prepara datos en formato largo para visualización - VERSIÓN CORREGIDA"""
@@ -346,6 +367,7 @@ def preparar_df_maestro(df_eventos, df_seg_raw):
         'Fecha de Evaluación Cualitativa 2026',
         'Estado Cuantitativa',
         'Fecha de Evaluación Cuantitativa 2026',
+        'EP_Hipoacusia', 'EP_Silicosis', 'EP_Metales', 'EP_Plaguicidas', 'EP_Total',
     ]
     df_prog = df_eventos.copy()
 
@@ -849,10 +871,11 @@ st.markdown("---")
 # Cargar datos con manejo de errores
 try:
     with st.spinner('Cargando datos... ⏳'):
-        df          = cargar_datos()
-        df_eventos  = preparar_datos_eventos(df)
-        df_seg_raw  = cargar_datos_seguimiento()
-        df_maestro  = preparar_df_maestro(df_eventos, df_seg_raw)
+        df             = cargar_datos()
+        df_eventos     = preparar_datos_eventos(df)
+        df_seg_raw     = cargar_datos_seguimiento()
+        df_maestro     = preparar_df_maestro(df_eventos, df_seg_raw)
+        df_ep_detalle  = cargar_datos_ep_detalle()
 
     # Validar que hay datos
     if len(df_maestro) == 0:
@@ -1033,7 +1056,21 @@ try:
     if st.sidebar.button("🔄 Resetear Filtros"):
         st.session_state['_ho_reset'] = True
         st.rerun()
-    
+
+    # Filtro EP
+    st.sidebar.markdown("---")
+    _ep_disponible_sidebar = 'EP_Total' in df_filtrado.columns
+    solo_ep = st.sidebar.toggle(
+        "🚨 Ver solo centros con denuncias de EP",
+        value=False,
+        disabled=not _ep_disponible_sidebar,
+        help="Filtra el programa mostrando solo centros con historial de EP (2019-2025)"
+    )
+    if solo_ep and _ep_disponible_sidebar:
+        df_filtrado = df_filtrado[
+            pd.to_numeric(df_filtrado['EP_Total'], errors='coerce').fillna(0) > 0
+        ]
+
     # df_seg: filtrado sólo para Tab 2 (Vigilancia de Salud).
     # Tab 1 ya no lo necesita — sus métricas y tabla usan df_filtrado (= df_maestro filtrado).
     df_seg = (aplicar_filtros(df_seg_raw, anexo_suseso, protocolo, region, tipo, mes,
@@ -1288,37 +1325,35 @@ try:
 
     with tab4:
         _EP_COLS = ['EP_Hipoacusia', 'EP_Silicosis', 'EP_Metales', 'EP_Plaguicidas', 'EP_Total']
-        _ep_disponible = all(c in df_seg_raw.columns for c in _EP_COLS) and not df_seg_raw.empty
+        _ep_pivot_ok   = all(c in df_seg_raw.columns for c in _EP_COLS) and not df_seg_raw.empty
+        _ep_detalle_ok = not df_ep_detalle.empty and 'Agente de Riesgo' in df_ep_detalle.columns
 
-        if not _ep_disponible:
+        if not _ep_pivot_ok:
             st.info("Los datos de EP no están disponibles aún. Ejecuta el procesador HO para enriquecer el seguimiento con historial de EP.")
         else:
-            # Construir tabla única por empresa (un ID-CT puede aparecer varias veces en el seguimiento)
-            _id_col = 'Identificador único (ID) centro de trabajo (CT)'
+            _id_col  = 'Identificador único (ID) centro de trabajo (CT)'
             _emp_col = 'Nombre empleador'
             _suc_col = 'NOMBRE SUCURSAL'
             _reg_col = 'Region Sucursal'
-
-            # Columnas de identidad disponibles
-            _id_cols_disponibles = [c for c in [_id_col, _emp_col, _suc_col, _reg_col] if c in df_seg_raw.columns]
+            _id_cols = [c for c in [_id_col, _emp_col, _suc_col, _reg_col] if c in df_seg_raw.columns]
 
             for col in _EP_COLS:
                 df_seg_raw[col] = pd.to_numeric(df_seg_raw[col], errors='coerce').fillna(0).astype(int)
 
-            df_ep_tab = (
-                df_seg_raw[_id_cols_disponibles + _EP_COLS]
-                .drop_duplicates(subset=[_id_col] if _id_col in _id_cols_disponibles else _id_cols_disponibles[:1])
+            df_ep_pivot_tab = (
+                df_seg_raw[_id_cols + _EP_COLS]
+                .drop_duplicates(subset=[_id_col] if _id_col in _id_cols else _id_cols[:1])
                 .query('EP_Total > 0')
                 .sort_values('EP_Total', ascending=False)
                 .reset_index(drop=True)
             )
 
             # ── Métricas ───────────────────────────────────────────────────
-            _total_empresas = df_ep_tab[_id_col].nunique() if _id_col in df_ep_tab.columns else len(df_ep_tab)
-            _total_casos    = int(df_ep_tab['EP_Total'].sum())
+            _total_empresas = df_ep_pivot_tab[_id_col].nunique() if _id_col in df_ep_pivot_tab.columns else len(df_ep_pivot_tab)
+            _total_casos    = int(df_ep_pivot_tab['EP_Total'].sum())
             _agente_max     = max(
                 ['EP_Hipoacusia', 'EP_Silicosis', 'EP_Metales', 'EP_Plaguicidas'],
-                key=lambda c: df_ep_tab[c].sum()
+                key=lambda c: df_ep_pivot_tab[c].sum()
             ).replace('EP_', '')
 
             mc1, mc2, mc3 = st.columns(3)
@@ -1326,24 +1361,65 @@ try:
             mc2.metric("Total casos EP (2019-2025)", f"{_total_casos:,}")
             mc3.metric("Agente más frecuente", _agente_max)
 
-            # ── Filtro por agente ──────────────────────────────────────────
-            _agente_sel = st.selectbox(
-                "Filtrar por agente",
-                ["Todos", "Hipoacusia", "Silicosis", "Metales", "Plaguicidas"],
-                key="ep_agente_sel"
-            )
-            if _agente_sel != "Todos":
-                df_ep_show = df_ep_tab[df_ep_tab[f'EP_{_agente_sel}'] > 0].copy()
-                df_ep_show = df_ep_show.sort_values(f'EP_{_agente_sel}', ascending=False).reset_index(drop=True)
-            else:
-                df_ep_show = df_ep_tab.copy()
+            # ── Tabla resumen por empresa ──────────────────────────────────
+            with st.expander("📊 Resumen por empresa (conteos)", expanded=True):
+                _agente_sel_pivot = st.selectbox(
+                    "Filtrar por agente",
+                    ["Todos", "Hipoacusia", "Silicosis", "Metales", "Plaguicidas"],
+                    key="ep_agente_pivot"
+                )
+                if _agente_sel_pivot != "Todos":
+                    _col_filtro = f'EP_{_agente_sel_pivot}'
+                    df_ep_show = df_ep_pivot_tab[df_ep_pivot_tab[_col_filtro] > 0].sort_values(_col_filtro, ascending=False).reset_index(drop=True)
+                else:
+                    df_ep_show = df_ep_pivot_tab.copy()
+                st.dataframe(df_ep_show, use_container_width=True, height=350, hide_index=True)
 
-            # ── Tabla ──────────────────────────────────────────────────────
-            st.dataframe(df_ep_show, use_container_width=True, height=500, hide_index=True)
+            # ── Explorador interactivo de casos ────────────────────────────
+            st.markdown("---")
+            st.subheader("🔍 Explorador de casos EP")
+
+            if not _ep_detalle_ok:
+                st.info("El detalle de casos no está disponible aún. Se generará en la próxima ejecución del procesador.")
+            else:
+                _empresas_det  = sorted(df_ep_detalle['RAZON SOCIAL'].dropna().unique().tolist())
+                _agentes_det   = ['Todos'] + sorted(df_ep_detalle['Agente de Riesgo'].dropna().unique().tolist())
+
+                ecol1, ecol2, ecol3 = st.columns([2, 2, 1])
+                with ecol1:
+                    _buscar = st.text_input("🔎 Buscar empresa", placeholder="Escribe para filtrar...", key="ep_buscar")
+                    _emp_opciones = [e for e in _empresas_det if _buscar.lower() in e.lower()] if _buscar else _empresas_det
+                    _emp_sel = st.selectbox("Empresa", _emp_opciones if _emp_opciones else _empresas_det, key="ep_empresa")
+
+                with ecol2:
+                    _suc_opciones = ['Todas'] + sorted(
+                        df_ep_detalle[df_ep_detalle['RAZON SOCIAL'] == _emp_sel]['F.GLS_NOM_SUC'].dropna().unique().tolist()
+                    )
+                    _suc_sel = st.selectbox("Sucursal", _suc_opciones, key="ep_sucursal")
+
+                with ecol3:
+                    _agente_det_sel = st.selectbox("Agente de Riesgo", _agentes_det, key="ep_agente_det")
+
+                # Aplicar filtros al detalle
+                _filtro = df_ep_detalle[df_ep_detalle['RAZON SOCIAL'] == _emp_sel].copy()
+                if _suc_sel != 'Todas':
+                    _filtro = _filtro[_filtro['F.GLS_NOM_SUC'] == _suc_sel]
+                if _agente_det_sel != 'Todos':
+                    _filtro = _filtro[_filtro['Agente de Riesgo'] == _agente_det_sel]
+
+                st.caption(f"{_emp_sel} | Sucursal: {_suc_sel} | **{len(_filtro)} casos encontrados**")
+
+                _cols_show = [c for c in [
+                    'RAZON SOCIAL', 'F.GLS_NOM_SUC', 'PERIODO', 'Agente de Riesgo',
+                    'Descripcion CAUSAL CONSULTA', 'Circunstancia',
+                    'Descripcion NATURALEZA LESION', 'DIAGNOSTICO ALTA'
+                ] if c in _filtro.columns]
+                st.dataframe(_filtro[_cols_show].reset_index(drop=True), use_container_width=True, height=400, hide_index=True)
+
             st.caption(
-                f"Fuente: Reporte EP 2019-2025. "
-                f"Los casos corresponden al período histórico completo, no solo 2026. "
-                f"Solo se muestran empresas del programa HO actual con EP_Total > 0."
+                "Fuente: Reporte EP 2019-2025. "
+                "Los casos corresponden al período histórico completo, no solo 2026. "
+                "Solo se muestran empresas del programa HO actual con EP_Total > 0."
             )
 
     st.markdown("---")
