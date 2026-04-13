@@ -1112,7 +1112,7 @@ try:
     st.markdown("---")
 
     # ── Preparación de datos compartidos entre tabs ──────────────────────────
-    ESTADOS_FUERA = {'Realizada fuera de programa', 'Realizada - No programada'}
+    ESTADOS_FUERA = {'Realizada - fuera de programa'}
     _id_col_tab   = 'Identificador único (ID) centro de trabajo (CT)'
     _ids_scope    = set(df_filtrado[_id_col_tab].unique())
 
