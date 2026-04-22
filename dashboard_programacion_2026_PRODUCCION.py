@@ -367,6 +367,13 @@ def preparar_df_maestro(df_eventos, df_seg_raw):
         'Fecha de Evaluación Cualitativa 2026',
         'Estado Cuantitativa',
         'Fecha de Evaluación Cuantitativa 2026',
+        'Fecha de Evaluación Vigilancia de Salud 2026',
+        'Número de trabajadores evaluados 2026 Hombres',
+        'Número de trabajadores evaluados 2026 Mujeres',
+        'Lista de INE Evaluado 2026',
+        'Causa_Ausencia',
+        'Observaciones',
+        'Es_Programado',
         'EP_Hipoacusia', 'EP_Silicosis', 'EP_Metales', 'EP_Plaguicidas', 'EP_Total',
     ]
     df_prog = df_eventos.copy()
@@ -1112,18 +1119,19 @@ try:
     st.markdown("---")
 
     # ── Preparación de datos compartidos entre tabs ──────────────────────────
-    ESTADOS_FUERA = {'Realizada fuera de programa', 'Realizada - No programada'}
+    ESTADOS_FUERA = {'Realizada - fuera de programa'}
     _id_col_tab   = 'Identificador único (ID) centro de trabajo (CT)'
     _ids_scope    = set(df_filtrado[_id_col_tab].unique())
 
-    # Evaluaciones fuera del programa: df_seg_raw scoped a los IDs del filtro actual
-    if not df_seg_raw.empty and _ids_scope:
-        _df_scope = df_seg_raw[df_seg_raw[_id_col_tab].isin(_ids_scope)].copy()
+    # Evaluaciones fuera del programa: usa df_seg (ya filtrado por sidebar)
+    # Incluye tanto el label 'Realizada - fuera de programa' como filas con Es_Programado='No'
+    if not df_seg.empty:
         _mask_fuera = (
-            _df_scope.get('Estado Cualitativa', pd.Series(dtype=str)).isin(ESTADOS_FUERA) |
-            _df_scope.get('Estado Cuantitativa', pd.Series(dtype=str)).isin(ESTADOS_FUERA)
+            df_seg.get('Estado Cualitativa', pd.Series(dtype=str)).isin(ESTADOS_FUERA) |
+            df_seg.get('Estado Cuantitativa', pd.Series(dtype=str)).isin(ESTADOS_FUERA) |
+            (df_seg.get('Es_Programado', pd.Series(dtype=str)) == 'No')
         )
-        df_fuera_prog = _df_scope[_mask_fuera].copy()
+        df_fuera_prog = df_seg[_mask_fuera].copy()
     else:
         df_fuera_prog = pd.DataFrame()
 
@@ -1169,6 +1177,15 @@ try:
             pct_t1  = round(rt_t1 / pt_t1 * 100, 1) if pt_t1 > 0 else 0
             pend_t1 = pt_t1 - rt_t1
 
+            no_aplica_c  = int((df_cuali['Estado Cualitativa']  == 'No aplica').sum())
+            no_aplica_q  = int((df_cuanti['Estado Cuantitativa'] == 'No aplica').sum())
+            no_aplica_t1 = no_aplica_c + no_aplica_q
+            solo_vs_c    = int((df_cuali['Estado Cualitativa']  == 'Sólo VS - sin eval ambiental').sum())
+            solo_vs_q    = int((df_cuanti['Estado Cuantitativa'] == 'Sólo VS - sin eval ambiental').sum())
+            solo_vs_t1   = solo_vs_c + solo_vs_q
+            pt_ajust_t1  = pt_t1 - no_aplica_t1
+            pct_ajust_t1 = round(rt_t1 / pt_ajust_t1 * 100, 1) if pt_ajust_t1 > 0 else 0
+
                 # Fuera del programa: usa df_fuera_prog pre-calculado antes de los tabs
             rc_fuera_t1 = int(df_fuera_prog['Estado Cualitativa'].isin(ESTADOS_FUERA).sum()) if not df_fuera_prog.empty and 'Estado Cualitativa' in df_fuera_prog.columns else 0
             rq_fuera_t1 = int(df_fuera_prog['Estado Cuantitativa'].isin(ESTADOS_FUERA).sum()) if not df_fuera_prog.empty and 'Estado Cuantitativa' in df_fuera_prog.columns else 0
@@ -1187,6 +1204,13 @@ try:
                     st.metric("Cuanti. fuera del programa", f"{rq_fuera_t1:,}")
             a4.metric("% Avance", f"{pct_t1}%")
             st.progress(pct_t1 / 100)
+            _extras = []
+            if no_aplica_t1 > 0:
+                _extras.append(f"Ajustado (excl. {no_aplica_t1:,} 'No aplica'): **{pct_ajust_t1}%**")
+            if solo_vs_t1 > 0:
+                _extras.append(f"Sólo VS sin eval ambiental: **{solo_vs_t1:,}**")
+            if _extras:
+                st.caption("  |  ".join(_extras))
 
             b1, b2, b3, b4 = st.columns(4)
             b1.metric("Pendientes",        f"{pend_t1:,}",                                            delta_color="inverse")
