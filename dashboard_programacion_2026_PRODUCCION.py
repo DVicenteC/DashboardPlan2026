@@ -288,6 +288,23 @@ def preparar_datos_eventos(df):
     """Prepara datos en formato largo para visualización - VERSIÓN CORREGIDA"""
     df = df.copy()
     
+    # Normalización robusta de nombres de Gerencia (compatibilidad histórica)
+    # 1. Gerencia Nacional
+    for col in df.columns:
+        c_low = str(col).lower()
+        if ('geren' in c_low or 'gerent' in c_low) and ('nacional' in c_low or 'cuenta' in c_low):
+            if col != 'Gerencia Nacional':
+                df = df.rename(columns={col: 'Gerencia Nacional'})
+                break
+    
+    # 2. Gerencia Local (evitando colisión con la Nacional ya renombrada)
+    if 'Gerencia' not in df.columns:
+        for col in df.columns:
+            c_low = str(col).lower()
+            if 'gerencia' in c_low and 'nacional' not in c_low and col != 'Gerencia Nacional':
+                df = df.rename(columns={col: 'Gerencia'})
+                break
+
     # Asegurar que existan columnas críticas para evitar KeyError en el concat
     if 'Gerencia Nacional' not in df.columns:
         df['Gerencia Nacional'] = 'Sin Gerente'
