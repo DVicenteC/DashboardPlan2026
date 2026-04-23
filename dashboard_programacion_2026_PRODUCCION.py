@@ -287,23 +287,21 @@ def cargar_datos_ep_detalle():
 def preparar_datos_eventos(df):
     """Prepara datos en formato largo para visualización - VERSIÓN CORREGIDA"""
     df = df.copy()
+    df.columns = [str(c).strip() for c in df.columns] # Limpiar espacios en encabezados
     
     # Normalización robusta de nombres de Gerencia (compatibilidad histórica)
-    # 1. Gerencia Nacional
+    # Buscamos coincidencias exactas o parciales ignorando mayúsculas
+    map_gerencias = {}
     for col in df.columns:
-        c_low = str(col).lower()
-        if ('geren' in c_low or 'gerent' in c_low) and ('nacional' in c_low or 'cuenta' in c_low):
-            if col != 'Gerencia Nacional':
-                df = df.rename(columns={col: 'Gerencia Nacional'})
-                break
+        c_low = col.lower()
+        if 'nacional' in c_low or 'cuentas' in c_low:
+            if 'geren' in c_low or 'gerent' in c_low:
+                map_gerencias[col] = 'Gerencia Nacional'
+        elif c_low == 'gerencia' or c_low == 'gerencia local' or c_low == 'gerente':
+            if col not in map_gerencias:
+                map_gerencias[col] = 'Gerencia'
     
-    # 2. Gerencia Local (evitando colisión con la Nacional ya renombrada)
-    if 'Gerencia' not in df.columns:
-        for col in df.columns:
-            c_low = str(col).lower()
-            if 'gerencia' in c_low and 'nacional' not in c_low and col != 'Gerencia Nacional':
-                df = df.rename(columns={col: 'Gerencia'})
-                break
+    df = df.rename(columns=map_gerencias)
 
     # Asegurar que existan columnas críticas para evitar KeyError en el concat
     if 'Gerencia Nacional' not in df.columns:
