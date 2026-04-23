@@ -287,34 +287,8 @@ def cargar_datos_ep_detalle():
 def preparar_datos_eventos(df):
     """Prepara datos en formato largo para visualización - VERSIÓN CORREGIDA"""
     df = df.copy()
-    df.columns = [str(c).strip() for c in df.columns] # Limpiar espacios en encabezados
-    
-    # Normalización robusta de nombres de Gerencia (compatibilidad histórica)
-    # Buscamos coincidencias exactas o parciales ignorando mayúsculas
-    map_gerencias = {}
-    for col in df.columns:
-        c_low = col.lower()
-        if 'nacional' in c_low or 'cuentas' in c_low:
-            if 'geren' in c_low or 'gerent' in c_low:
-                map_gerencias[col] = 'Gerencia Nacional'
-        elif c_low == 'gerencia' or c_low == 'gerencia local' or c_low == 'gerente':
-            if col not in map_gerencias:
-                map_gerencias[col] = 'Gerencia'
-    
-    df = df.rename(columns=map_gerencias)
+    df.columns = [str(c).strip() for c in df.columns]
 
-    # Asegurar que existan columnas críticas para evitar KeyError en el concat
-    if 'Gerencia Nacional' not in df.columns:
-        df['Gerencia Nacional'] = 'Sin Gerente'
-    if 'Gerencia' not in df.columns:
-        df['Gerencia'] = 'Sin Gerencia Local'
-    if 'Holding' not in df.columns:
-        df['Holding'] = 'Sin Holding'
-    if 'AnexoSUSESO' not in df.columns:
-        df['AnexoSUSESO'] = 'Sin Información'
-    if 'Protocolo' not in df.columns:
-        df['Protocolo'] = 'Sin Protocolo'
-        
     # Separar cualitativas y cuantitativas
     cuali = df[df['Fecha de Evaluación Cualitativa 2026'].notna()].copy()
     cuali['tipo'] = 'Cualitativa'
@@ -324,67 +298,38 @@ def preparar_datos_eventos(df):
     cuanti['tipo'] = 'Cuantitativa'
     cuanti['fecha'] = cuanti['Fecha de Evaluación Cuantitativa 2026']
     
-    # Columnas base que siempre deben existir
-    columnas_base = ['fecha', 'tipo', 'Protocolo', 'Region Sucursal', 'Agente',
-                     'Nivel de riesgo', 'Comuna CT', 'NOMBRE SUCURSAL', 'Rut Empleador o Rut trabajador(a)','Nombre empleador',
-                     'AnexoSUSESO', 'Identificador único (ID) centro de trabajo (CT)',
-                     'Gerencia Nacional', 'Gerencia', 'Faena Marítimo - Portuaria', 'Holding']
-
-    # Columnas opcionales si existen
-    columnas_opcionales = ['Motivo de programación', 'Faena Codelco']
+    # Columnas base (ID y Protocolo son obligatorias para el join posterior)
+    id_col = 'Identificador único (ID) centro de trabajo (CT)'
     
-    columnas_finales = columnas_base.copy()
-    for col in columnas_opcionales:
-        if col in df.columns:
-            columnas_finales.append(col)
+    # Lista extendida de columnas a preservar si existen
+    cols_to_keep = ['fecha', 'tipo', 'Protocolo', 'Agente', id_col, 'Region Sucursal', 
+                    'NOMBRE SUCURSAL', 'Nombre empleador', 'Gerencia Nacional', 'Gerencia', 
+                    'Holding', 'AnexoSUSESO', 'Nivel de riesgo', 'Comuna CT', 
+                    'Rut Empleador o Rut trabajador(a)', 'Motivo de programación', 
+                    'Faena Codelco', 'Faena Marítimo - Portuaria']
     
-    df_eventos = pd.concat([cuali[columnas_finales], cuanti[columnas_finales]], ignore_index=True)
+    columnas_finales = [c for c in cols_to_keep if c in df.columns or c in ['fecha', 'tipo']]
     
-    # FIX CRÍTICO: Convertir columnas a string ANTES de cualquier operación
-    df_eventos['Comuna CT'] = df_eventos['Comuna CT'].fillna('Sin Información').astype(str)
-    df_eventos['AnexoSUSESO'] = df_eventos['AnexoSUSESO'].fillna('Sin Información').astype(str)
-    df_eventos['Identificador único (ID) centro de trabajo (CT)'] = df_eventos['Identificador único (ID) centro de trabajo (CT)'].fillna('Sin ID').astype(str)
-    df_eventos['Protocolo'] = df_eventos['Protocolo'].fillna('Sin Protocolo').astype(str)
-    df_eventos['Region Sucursal'] = df_eventos['Region Sucursal'].fillna('Sin Región').astype(str)
-    df_eventos['Agente'] = df_eventos['Agente'].fillna('Sin Agente').astype(str)
-    df_eventos['Nivel de riesgo'] = df_eventos['Nivel de riesgo'].fillna('Sin Nivel').astype(str)
-    df_eventos['NOMBRE SUCURSAL'] = df_eventos['NOMBRE SUCURSAL'].fillna('Sin Sucursal').astype(str)
-    df_eventos['Nombre empleador'] = df_eventos['Nombre empleador'].fillna('Sin Empleador').astype(str)
-    df_eventos['Gerencia Nacional'] = df_eventos['Gerencia Nacional'].fillna('Sin Gerente').astype(str)
-    df_eventos['Gerencia'] = df_eventos['Gerencia'].fillna('Sin Gerencia Local').astype(str)
-    df_eventos['Holding'] = df_eventos['Holding'].fillna('Sin Holding').astype(str)
-    df_eventos['AnexoSUSESO'] = df_eventos['AnexoSUSESO'].fillna('Sin Información').astype(str)
-    df_eventos['Protocolo'] = df_eventos['Protocolo'].fillna('Sin Protocolo').astype(str)
-
-    # Convertir columnas opcionales a string si existen
-    if 'Faena Codelco' in df_eventos.columns:
-        df_eventos['Faena Codelco'] = df_eventos['Faena Codelco'].fillna('Sin Faena').astype(str)
+    df_eventos = pd.concat([cuali[[c for c in columnas_finales if c in cuali.columns]], 
+                            cuanti[[c for c in columnas_finales if c in cuanti.columns]]], 
+                           ignore_index=True)
     
-    if 'Faena Marítimo - Portuaria' in df_eventos.columns:
-        df_eventos['Faena Marítimo - Portuaria'] = df_eventos['Faena Marítimo - Portuaria'].fillna('Sin Información').astype(str)
-    
-    if 'Motivo de programación' in df_eventos.columns:
-        df_eventos['Motivo de programación'] = df_eventos['Motivo de programación'].fillna('Sin Motivo').astype(str)
-    
-    # Extraer información temporal de forma robusta
+    # FIX CRÍTICO: Convertir todo a string (menos la fecha) para evitar errores de tipo en filtros
+    for col in df_eventos.columns:
+        if col != 'fecha':
+            df_eventos[col] = df_eventos[col].fillna(f'Sin {col}').astype(str)
+            
+    # Extraer información temporal
     df_eventos['mes'] = df_eventos['fecha'].dt.month
     df_eventos['dia'] = df_eventos['fecha'].dt.day
-    
-    # Nombres de meses en español
     nombres_meses = {
         1: 'Enero', 2: 'Febrero', 3: 'Marzo', 4: 'Abril',
         5: 'Mayo', 6: 'Junio', 7: 'Julio', 8: 'Agosto',
         9: 'Septiembre', 10: 'Octubre', 11: 'Noviembre', 12: 'Diciembre'
     }
-    
-    # Mapear nombres de meses y manejar NaN
     df_eventos['mes_nombre'] = df_eventos['mes'].map(nombres_meses).fillna('Sin Mes').astype(str)
     
-    # FIX CRÍTICO: NO usar Categorical (causa errores con filtros dinámicos)
-    # Eliminar filas con fechas inválidas
-    df_eventos = df_eventos[df_eventos['fecha'].notna()].copy()
-    
-    return df_eventos
+    return df_eventos[df_eventos['fecha'].notna()].copy()
 
 @st.cache_data
 def preparar_df_maestro(df_eventos, df_seg_raw):
@@ -406,6 +351,7 @@ def preparar_df_maestro(df_eventos, df_seg_raw):
         'Observaciones',
         'Es_Programado',
         'EP_Hipoacusia', 'EP_Silicosis', 'EP_Metales', 'EP_Plaguicidas', 'EP_Total',
+        'Gerencia Nacional', 'Gerencia', 'Holding'
     ]
     df_prog = df_eventos.copy()
 
@@ -430,9 +376,17 @@ def preparar_df_maestro(df_eventos, df_seg_raw):
     df_slim['_jk'] = (df_slim[id_col].str.strip().str.upper() + sep +
                       df_slim['Protocolo'].str.strip().str.upper() + sep +
                       df_slim[agente_seg].str.strip().str.lower())
+    
+    # Join robusto: si las gerencias vienen en seg_raw, reemplazan a las de prog
     df_slim = df_slim.drop(columns=[id_col, 'Protocolo', agente_seg])
-
-    df_maestro = df_prog.merge(df_slim, on='_jk', how='left').drop(columns=['_jk'])
+    df_maestro = df_prog.merge(df_slim, on='_jk', how='left', suffixes=('', '_seg')).drop(columns=['_jk'])
+    
+    # Coalesce para Gerencia y Holding (preferir siempre seguimiento si viene ahí)
+    for col in ['Gerencia Nacional', 'Gerencia', 'Holding']:
+        seg_col = f"{col}_seg"
+        if seg_col in df_maestro.columns:
+            df_maestro[col] = df_maestro[seg_col].fillna(df_maestro[col])
+            df_maestro = df_maestro.drop(columns=[seg_col])
 
     for col in SEG_COLS:
         if col not in df_maestro.columns:
