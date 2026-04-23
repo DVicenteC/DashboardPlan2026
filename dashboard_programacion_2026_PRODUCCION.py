@@ -300,7 +300,7 @@ def preparar_datos_eventos(df):
     columnas_base = ['fecha', 'tipo', 'Protocolo', 'Region Sucursal', 'Agente',
                      'Nivel de riesgo', 'Comuna CT', 'NOMBRE SUCURSAL', 'Rut Empleador o Rut trabajador(a)','Nombre empleador',
                      'AnexoSUSESO', 'Identificador único (ID) centro de trabajo (CT)',
-                     'Gerencia - Cuentas Nacionales', 'Faena Marítimo - Portuaria', 'Holding']
+                     'Gerencia - Cuentas Nacionales', 'Gerencia', 'Faena Marítimo - Portuaria', 'Holding']
 
     # Columnas opcionales si existen
     columnas_opcionales = ['Motivo de programación', 'Faena Codelco']
@@ -322,8 +322,12 @@ def preparar_datos_eventos(df):
     df_eventos['Nivel de riesgo'] = df_eventos['Nivel de riesgo'].fillna('Sin Nivel').astype(str)
     df_eventos['NOMBRE SUCURSAL'] = df_eventos['NOMBRE SUCURSAL'].fillna('Sin Sucursal').astype(str)
     df_eventos['Nombre empleador'] = df_eventos['Nombre empleador'].fillna('Sin Empleador').astype(str)
-    df_eventos['Gerencia - Cuentas Nacionales'] = df_eventos['Gerencia - Cuentas Nacionales'].fillna('Sin Gerente').astype(str)
-    df_eventos['Holding'] = df_eventos['Holding'].fillna('Sin Holding').astype(str)
+    df_eventos['Gerencia - Cuentas Nacionales'] = df_eventos['Gerencia - Cuentas Nacionales'].fillna('Sin Gerente').astype(str) if 'Gerencia - Cuentas Nacionales' in df_eventos.columns else 'Sin Gerente'
+    if 'Gerencia' in df_eventos.columns:
+        df_eventos['Gerencia'] = df_eventos['Gerencia'].fillna('Sin Gerencia Local').astype(str)
+    else:
+        df_eventos['Gerencia'] = 'Sin Gerencia Local'
+    df_eventos['Holding'] = df_eventos['Holding'].fillna('Sin Holding').astype(str) if 'Holding' in df_eventos.columns else 'Sin Holding'
 
     # Convertir columnas opcionales a string si existen
     if 'Faena Codelco' in df_eventos.columns:
@@ -421,11 +425,15 @@ def aplicar_filtros(df, anexo_suseso, protocolo, region, tipo, mes, faena_codelc
     if anexo_suseso != 'Todos' and 'AnexoSUSESO' in df_filtrado.columns:
         df_filtrado = df_filtrado[df_filtrado['AnexoSUSESO'] == anexo_suseso].copy()
 
-    # Filtro Gerente/Gerencia
-    if gerente != 'Todos':
-        col_ger = 'Gerencia - Cuentas Nacionales' if 'Gerencia - Cuentas Nacionales' in df_filtrado.columns else 'Gerencia'
-        if col_ger in df_filtrado.columns:
-            df_filtrado = df_filtrado[df_filtrado[col_ger] == gerente].copy()
+    # Filtro Gerente Nacional
+    if gerente != 'Todos' and 'Gerencia - Cuentas Nacionales' in df_filtrado.columns:
+        df_filtrado = df_filtrado[df_filtrado['Gerencia - Cuentas Nacionales'] == gerente].copy()
+
+    # Filtro Gerencia Local
+    if 'ho_gerencia_local' in st.session_state and st.session_state.ho_gerencia_local != 'Todos':
+        col_ger_loc = 'Gerencia'
+        if col_ger_loc in df_filtrado.columns:
+            df_filtrado = df_filtrado[df_filtrado[col_ger_loc] == st.session_state.ho_gerencia_local].copy()
 
     if holding != 'Todos' and 'Holding' in df_filtrado.columns:
         df_filtrado = df_filtrado[df_filtrado['Holding'] == holding].copy()
@@ -812,13 +820,13 @@ def mostrar_resumen_detallado(df_filtrado, protocolo_seleccionado, seccion='tab1
         st.markdown("#### Listado Completo de Evaluaciones")
 
         columnas_detalle = [
-            'fecha', 'tipo', 'Gerencia - Cuentas Nacionales', 'Region Sucursal',
+            'fecha', 'tipo', 'Gerencia - Cuentas Nacionales', 'Gerencia', 'Region Sucursal',
             'Rut Empleador o Rut trabajador(a)', 'Nombre empleador',
             'Identificador único (ID) centro de trabajo (CT)', 'NOMBRE SUCURSAL', 'Agente',
             'Protocolo', 'Comuna CT', 'Nivel de riesgo', 'AnexoSUSESO', 'Faena Marítimo - Portuaria'
         ]
         nombres_columnas = [
-            'Fecha', 'Tipo', 'Gerente', 'Región',
+            'Fecha', 'Tipo', 'Gerente Nacional', 'Gerencia Local', 'Región',
             'Rut Empleador o Rut trabajador(a)', 'Nombre empleador',
             'Identificador único (ID) centro de trabajo (CT)', 'Sucursal', 'Agente',
             'Protocolo', 'Comuna', 'Nivel de Riesgo', 'Anexo SUSESO', 'Marítimo Portuario'
@@ -844,12 +852,14 @@ def mostrar_resumen_detallado(df_filtrado, protocolo_seleccionado, seccion='tab1
                 columnas_detalle.append(src)
                 nombres_columnas.append(dst)
 
-        columnas_detalle = [c for c in columnas_detalle if c in df_filtrado.columns]
-        nombres_columnas = nombres_columnas[:len(columnas_detalle)]
+        # Alineación robusta de encabezados
+        map_final = {c: n for c, n in zip(columnas_detalle, nombres_columnas)}
+        columnas_disponibles = [c for c in columnas_detalle if c in df_filtrado.columns]
+        nombres_disponibles = [map_final[c] for c in columnas_disponibles]
 
-        df_tabla = df_filtrado[columnas_detalle].copy()
+        df_tabla = df_filtrado[columnas_disponibles].copy()
         df_tabla['fecha'] = df_tabla['fecha'].dt.strftime('%d-%m-%Y')
-        df_tabla.columns = nombres_columnas
+        df_tabla.columns = nombres_disponibles
         df_tabla = df_tabla.sort_values('Fecha')
         
         st.dataframe(df_tabla, use_container_width=True, height=400, hide_index=True)
@@ -918,6 +928,7 @@ try:
     # ── 1. Defaults e inicialización de session_state ─────────────────────────
     _defaults = {
         'ho_gerente':   'Todos',
+        'ho_gerencia_local': 'Todos',
         'ho_holding':   'Todos',
         'ho_empleador': 'Todos',
         'ho_protocolo': 'Todos',
@@ -941,8 +952,9 @@ try:
     # ── 2. Definición de filtros ──────────────────────────────────────────────
     # (key_session, columna_df, valor_excluido, valor_todos)
     _defs = [
-        ('ho_gerente',   'Gerencia - Cuentas Nacionales', 'Sin Gerente',     'Todos'),
-        ('ho_holding',   'Holding',                        'Sin Holding',     'Todos'),
+        ('ho_gerente',   'Gerencia - Cuentas Nacionales', 'Sin Gerente',        'Todos'),
+        ('ho_gerencia_local', 'Gerencia',             'Sin Gerencia Local', 'Todos'),
+        ('ho_holding',   'Holding',                        'Sin Holding',        'Todos'),
         ('ho_empleador', 'Nombre empleador',               'Sin Empleador',   'Todos'),
         ('ho_protocolo', 'Protocolo',                      'Sin Protocolo',   'Todos'),
         ('ho_region',    'Region Sucursal',                'Sin Región',      'Todas'),
@@ -998,9 +1010,14 @@ try:
                      'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
 
     gerente = st.sidebar.selectbox(
-        "Gerencia - Cuentas Nacionales",
+        "Gerencia Nacional",
         ['Todos'] + _opciones('ho_gerente', 'Gerencia - Cuentas Nacionales', 'Sin Gerente'),
         key='ho_gerente'
+    )
+    gerencia_local = st.sidebar.selectbox(
+        "Gerencia Local",
+        ['Todos'] + _opciones('ho_gerencia_local', 'Gerencia', 'Sin Gerencia Local'),
+        key='ho_gerencia_local'
     )
     holding = st.sidebar.selectbox(
         "Holding",
@@ -1280,7 +1297,8 @@ try:
             _col_map = [
                 ('_fecha_real',   'Fecha real'),
                 ('_tipo',         'Tipo'),
-                (_ger_col,        'Gerente'),
+                (_ger_col,        'Gerente Nacional'),
+                ('Gerencia',      'Gerencia Local'),
                 ('Region Sucursal','Región'),
                 (_rut_col,        'Rut Empleador o Rut trabajador(a)'),
                 (_nom_col,        'Nombre empleador'),
