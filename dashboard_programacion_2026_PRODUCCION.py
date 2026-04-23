@@ -286,7 +286,20 @@ def cargar_datos_ep_detalle():
 @st.cache_data
 def preparar_datos_eventos(df):
     """Prepara datos en formato largo para visualización - VERSIÓN CORREGIDA"""
+    df = df.copy()
     
+    # Asegurar que existan columnas críticas para evitar KeyError en el concat
+    if 'Gerencia Nacional' not in df.columns:
+        df['Gerencia Nacional'] = 'Sin Gerente'
+    if 'Gerencia' not in df.columns:
+        df['Gerencia'] = 'Sin Gerencia Local'
+    if 'Holding' not in df.columns:
+        df['Holding'] = 'Sin Holding'
+    if 'AnexoSUSESO' not in df.columns:
+        df['AnexoSUSESO'] = 'Sin Información'
+    if 'Protocolo' not in df.columns:
+        df['Protocolo'] = 'Sin Protocolo'
+        
     # Separar cualitativas y cuantitativas
     cuali = df[df['Fecha de Evaluación Cualitativa 2026'].notna()].copy()
     cuali['tipo'] = 'Cualitativa'
@@ -300,7 +313,7 @@ def preparar_datos_eventos(df):
     columnas_base = ['fecha', 'tipo', 'Protocolo', 'Region Sucursal', 'Agente',
                      'Nivel de riesgo', 'Comuna CT', 'NOMBRE SUCURSAL', 'Rut Empleador o Rut trabajador(a)','Nombre empleador',
                      'AnexoSUSESO', 'Identificador único (ID) centro de trabajo (CT)',
-                     'Gerencia - Cuentas Nacionales', 'Gerencia', 'Faena Marítimo - Portuaria', 'Holding']
+                     'Gerencia Nacional', 'Gerencia', 'Faena Marítimo - Portuaria', 'Holding']
 
     # Columnas opcionales si existen
     columnas_opcionales = ['Motivo de programación', 'Faena Codelco']
@@ -322,12 +335,11 @@ def preparar_datos_eventos(df):
     df_eventos['Nivel de riesgo'] = df_eventos['Nivel de riesgo'].fillna('Sin Nivel').astype(str)
     df_eventos['NOMBRE SUCURSAL'] = df_eventos['NOMBRE SUCURSAL'].fillna('Sin Sucursal').astype(str)
     df_eventos['Nombre empleador'] = df_eventos['Nombre empleador'].fillna('Sin Empleador').astype(str)
-    df_eventos['Gerencia - Cuentas Nacionales'] = df_eventos['Gerencia - Cuentas Nacionales'].fillna('Sin Gerente').astype(str) if 'Gerencia - Cuentas Nacionales' in df_eventos.columns else 'Sin Gerente'
-    if 'Gerencia' in df_eventos.columns:
-        df_eventos['Gerencia'] = df_eventos['Gerencia'].fillna('Sin Gerencia Local').astype(str)
-    else:
-        df_eventos['Gerencia'] = 'Sin Gerencia Local'
-    df_eventos['Holding'] = df_eventos['Holding'].fillna('Sin Holding').astype(str) if 'Holding' in df_eventos.columns else 'Sin Holding'
+    df_eventos['Gerencia Nacional'] = df_eventos['Gerencia Nacional'].fillna('Sin Gerente').astype(str)
+    df_eventos['Gerencia'] = df_eventos['Gerencia'].fillna('Sin Gerencia Local').astype(str)
+    df_eventos['Holding'] = df_eventos['Holding'].fillna('Sin Holding').astype(str)
+    df_eventos['AnexoSUSESO'] = df_eventos['AnexoSUSESO'].fillna('Sin Información').astype(str)
+    df_eventos['Protocolo'] = df_eventos['Protocolo'].fillna('Sin Protocolo').astype(str)
 
     # Convertir columnas opcionales a string si existen
     if 'Faena Codelco' in df_eventos.columns:
@@ -426,8 +438,8 @@ def aplicar_filtros(df, anexo_suseso, protocolo, region, tipo, mes, faena_codelc
         df_filtrado = df_filtrado[df_filtrado['AnexoSUSESO'] == anexo_suseso].copy()
 
     # Filtro Gerente Nacional
-    if gerente != 'Todos' and 'Gerencia - Cuentas Nacionales' in df_filtrado.columns:
-        df_filtrado = df_filtrado[df_filtrado['Gerencia - Cuentas Nacionales'] == gerente].copy()
+    if gerente != 'Todos' and 'Gerencia Nacional' in df_filtrado.columns:
+        df_filtrado = df_filtrado[df_filtrado['Gerencia Nacional'] == gerente].copy()
 
     # Filtro Gerencia Local
     if 'ho_gerencia_local' in st.session_state and st.session_state.ho_gerencia_local != 'Todos':
@@ -791,7 +803,7 @@ def mostrar_resumen_detallado(df_filtrado, protocolo_seleccionado, seccion='tab1
             'Comuna CT': 'first',
             'Agente': lambda x: ', '.join(sorted(set(str(a) for a in x if str(a) != 'Sin Agente'))),
             'AnexoSUSESO': 'first',
-            'Gerencia - Cuentas Nacionales': 'first',
+            'Gerencia Nacional': 'first',
             'Faena Marítimo - Portuaria': 'first'
         }).reset_index()
         
@@ -820,7 +832,7 @@ def mostrar_resumen_detallado(df_filtrado, protocolo_seleccionado, seccion='tab1
         st.markdown("#### Listado Completo de Evaluaciones")
 
         columnas_detalle = [
-            'fecha', 'tipo', 'Gerencia - Cuentas Nacionales', 'Gerencia', 'Region Sucursal',
+            'fecha', 'tipo', 'Gerencia Nacional', 'Gerencia', 'Region Sucursal',
             'Rut Empleador o Rut trabajador(a)', 'Nombre empleador',
             'Identificador único (ID) centro de trabajo (CT)', 'NOMBRE SUCURSAL', 'Agente',
             'Protocolo', 'Comuna CT', 'Nivel de riesgo', 'AnexoSUSESO', 'Faena Marítimo - Portuaria'
@@ -952,7 +964,7 @@ try:
     # ── 2. Definición de filtros ──────────────────────────────────────────────
     # (key_session, columna_df, valor_excluido, valor_todos)
     _defs = [
-        ('ho_gerente',   'Gerencia - Cuentas Nacionales', 'Sin Gerente',        'Todos'),
+        ('ho_gerente',   'Gerencia Nacional', 'Sin Gerente',        'Todos'),
         ('ho_gerencia_local', 'Gerencia',             'Sin Gerencia Local', 'Todos'),
         ('ho_holding',   'Holding',                        'Sin Holding',        'Todos'),
         ('ho_empleador', 'Nombre empleador',               'Sin Empleador',   'Todos'),
@@ -1011,7 +1023,7 @@ try:
 
     gerente = st.sidebar.selectbox(
         "Gerencia Nacional",
-        ['Todos'] + _opciones('ho_gerente', 'Gerencia - Cuentas Nacionales', 'Sin Gerente'),
+        ['Todos'] + _opciones('ho_gerente', 'Gerencia Nacional', 'Sin Gerente'),
         key='ho_gerente'
     )
     gerencia_local = st.sidebar.selectbox(
@@ -1290,7 +1302,7 @@ try:
             # Mapeo de columnas: (col_en_df_seg_raw, nombre_display)
             # Mismo orden que Listado Completo de Evaluaciones
             _agente_col = 'AGENTE' if 'AGENTE' in df_fp.columns else 'Agente'
-            _ger_col    = 'Gerencia - Cuentas Nacionales' if 'Gerencia - Cuentas Nacionales' in df_fp.columns else 'Gerencia'
+            _ger_col    = 'Gerencia Nacional' if 'Gerencia Nacional' in df_fp.columns else 'Gerencia'
             _nom_col    = 'Nombre Empleador' if 'Nombre Empleador' in df_fp.columns else 'Nombre empleador'
             _rut_col    = 'RUT Empleador o Rut trabajador(a)' if 'RUT Empleador o Rut trabajador(a)' in df_fp.columns else 'Rut Empleador o Rut trabajador(a)'
 
