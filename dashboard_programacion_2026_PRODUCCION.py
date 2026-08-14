@@ -154,6 +154,17 @@ def normalizar_columnas(df):
     df = df.rename(columns=mapeo_columnas)
     return df
 
+# Vocabulario de "centro de trabajo vigente" en la columna 'Vigente CT'.
+# El maestro de adherentes informa 'Si' / 'No'; se aceptan variantes por si la
+# fuente cambia de vocabulario (Activa, S, etc.).
+CT_VIGENTE_VALORES = {'SI', 'SÍ', 'S', 'ACTIVA', 'ACTIVO', 'VIGENTE'}
+
+
+def es_ct_vigente(serie):
+    """Máscara booleana de centros de trabajo vigentes, tolerante al vocabulario."""
+    return serie.astype(str).str.strip().str.upper().isin(CT_VIGENTE_VALORES)
+
+
 def parsear_fecha_flexible(serie):
     """
     Parsea una serie de fechas que puede tener formatos mixtos, priorizando convención chilena:
@@ -306,7 +317,7 @@ def preparar_datos_eventos(df):
                     'NOMBRE SUCURSAL', 'Nombre empleador', 'Gerencia Nacional', 'Gerencia', 
                     'Holding', 'AnexoSUSESO', 'Nivel de riesgo', 'Comuna CT', 
                     'Rut Empleador o Rut trabajador(a)', 'Motivo de programación', 
-                    'Faena Codelco', 'Faena Marítimo - Portuaria']
+                    'Faena Codelco', 'Faena Marítimo - Portuaria', 'Vigente CT']
     
     columnas_finales = [c for c in cols_to_keep if c in df.columns or c in ['fecha', 'tipo']]
     
@@ -351,7 +362,8 @@ def preparar_df_maestro(df_eventos, df_seg_raw):
         'Observaciones',
         'Es_Programado',
         'EP_Hipoacusia', 'EP_Silicosis', 'EP_Metales', 'EP_Plaguicidas', 'EP_Total',
-        'Gerencia Nacional', 'Gerencia', 'Holding'
+        'Gerencia Nacional', 'Gerencia', 'Holding',
+        'Vigente CT'
     ]
     df_prog = df_eventos.copy()
 
@@ -387,6 +399,18 @@ def preparar_df_maestro(df_eventos, df_seg_raw):
         if seg_col in df_maestro.columns:
             df_maestro[col] = df_maestro[seg_col].fillna(df_maestro[col])
             df_maestro = df_maestro.drop(columns=[seg_col])
+
+    # 'Vigente CT': el seguimiento es la fuente más fresca (marca los CT dados de
+    # baja). Si el seguimiento no trae valor para esa fila, se conserva el de la
+    # programación. Ojo: en df_prog los nulos ya vienen como 'Sin Vigente CT'.
+    if 'Vigente CT_seg' in df_maestro.columns:
+        _seg_val = df_maestro['Vigente CT_seg'].astype(str).str.strip()
+        _usar_seg = df_maestro['Vigente CT_seg'].notna() & (_seg_val != '') & (_seg_val.str.lower() != 'nan')
+        if 'Vigente CT' in df_maestro.columns:
+            df_maestro['Vigente CT'] = df_maestro['Vigente CT'].where(~_usar_seg, _seg_val)
+        else:
+            df_maestro['Vigente CT'] = _seg_val
+        df_maestro = df_maestro.drop(columns=['Vigente CT_seg'])
 
     for col in SEG_COLS:
         if col not in df_maestro.columns:
@@ -902,6 +926,15 @@ try:
         disabled=not _ep_disponible_sidebar,
         help="Filtra el programa mostrando solo centros con historial de EP (2019-2025)"
     )
+
+    # Toggle "solo centros de trabajo vigentes" — lee la columna 'Vigente CT'
+    _vig_disponible = 'Vigente CT' in df_maestro.columns
+    solo_vigentes = st.sidebar.toggle(
+        "🟢 Ver solo centros de trabajo vigentes",
+        value=False,
+        disabled=not _vig_disponible,
+        help="Deja fuera los centros de trabajo marcados como no vigentes en 'Vigente CT'"
+    )
     st.sidebar.markdown("---")
 
     _base = df_maestro  # dataset unificado (programación + seguimiento), nunca se modifica
@@ -1077,11 +1110,17 @@ try:
             pd.to_numeric(df_filtrado['EP_Total'], errors='coerce').fillna(0) > 0
         ]
 
+    if solo_vigentes and _vig_disponible:
+        df_filtrado = df_filtrado[es_ct_vigente(df_filtrado['Vigente CT'])]
+
     # df_seg: filtrado sólo para Tab 2 (Vigilancia de Salud).
     # Tab 1 ya no lo necesita — sus métricas y tabla usan df_filtrado (= df_maestro filtrado).
     df_seg = (aplicar_filtros(df_seg_raw, anexo_suseso, protocolo, region, tipo, mes,
                               faena_codelco, gerente, maritimo_portuario, holding, nombre_empleador)
               if not df_seg_raw.empty else pd.DataFrame())
+
+    if solo_vigentes and not df_seg.empty and 'Vigente CT' in df_seg.columns:
+        df_seg = df_seg[es_ct_vigente(df_seg['Vigente CT'])]
 
     # Métricas
     col1, col2, col3, col4 = st.columns(4)
