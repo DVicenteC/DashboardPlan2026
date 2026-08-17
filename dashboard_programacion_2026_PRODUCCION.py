@@ -294,6 +294,75 @@ def cargar_datos_ep_detalle():
         return pd.DataFrame()
 
 
+# Columnas EP que el procesador escribe (o debería escribir) en el seguimiento.
+EP_COLS = ['EP_Hipoacusia', 'EP_Silicosis', 'EP_Metales', 'EP_Plaguicidas', 'EP_Total']
+
+
+def norm_id_ct(serie):
+    """Normaliza el ID de centro de trabajo para cruces entre hojas."""
+    return serie.astype(str).str.strip().str.upper()
+
+
+@st.cache_data
+def enriquecer_ep_desde_detalle(df_maestro, df_ep_detalle):
+    """Repuebla las columnas EP_* a partir de la hoja 'EP Detalle'.
+
+    El seguimiento no siempre trae las columnas EP_* (hoy no las trae). Cuando
+    faltan, preparar_df_maestro las crea vacías: el toggle de EP quedaba activo
+    pero dejaba el dashboard en cero. Aquí se reconstruye el mismo pivot que
+    arma el procesador (conteo de casos por ID-CT y agente).
+    """
+    if df_maestro.empty:
+        return df_maestro
+
+    _ya_tiene = ('EP_Total' in df_maestro.columns and
+                 (pd.to_numeric(df_maestro['EP_Total'], errors='coerce').fillna(0) > 0).any())
+    if _ya_tiene:
+        return df_maestro
+    if df_ep_detalle.empty or not {'ID-CT', 'Agente de Riesgo'}.issubset(df_ep_detalle.columns):
+        return df_maestro
+
+    det = df_ep_detalle[df_ep_detalle['Agente de Riesgo'].notna()].copy()
+    if det.empty:
+        return df_maestro
+
+    det['_id']     = norm_id_ct(det['ID-CT'])
+    det['_ep_col'] = 'EP_' + det['Agente de Riesgo'].astype(str).str.strip()
+    pivot = det.groupby(['_id', '_ep_col']).size().unstack(fill_value=0)
+    for col in EP_COLS[:-1]:
+        if col not in pivot.columns:
+            pivot[col] = 0
+    pivot['EP_Total'] = pivot[EP_COLS[:-1]].sum(axis=1)
+
+    id_col = 'Identificador único (ID) centro de trabajo (CT)'
+    if id_col not in df_maestro.columns:
+        return df_maestro
+
+    df = df_maestro.copy()
+    _ids = norm_id_ct(df[id_col])
+    for col in EP_COLS:
+        df[col] = _ids.map(pivot[col]).fillna(0).astype(int)
+    return df
+
+
+@st.cache_data
+def ids_ct_no_vigentes(df_seg_raw):
+    """IDs de centros de trabajo NO vigentes, según el seguimiento.
+
+    'Vigente CT' es un atributo del centro, no de la fila (CT + protocolo +
+    agente). El seguimiento trae valores contradictorios para un mismo CT (hoy
+    14 casos); en esos empates manda el 'No', porque el filtro existe justamente
+    para ocultar centros cerrados.
+    """
+    id_col = 'Identificador único (ID) centro de trabajo (CT)'
+    if df_seg_raw.empty or 'Vigente CT' not in df_seg_raw.columns or id_col not in df_seg_raw.columns:
+        return set()
+    _val = df_seg_raw['Vigente CT'].astype(str).str.strip()
+    _informado = (_val != '') & (_val.str.lower() != 'nan')
+    _no_vigente = _informado & ~es_ct_vigente(df_seg_raw['Vigente CT'])
+    return set(norm_id_ct(df_seg_raw.loc[_no_vigente, id_col]))
+
+
 @st.cache_data
 def preparar_datos_eventos(df):
     """Prepara datos en formato largo para visualización - VERSIÓN CORREGIDA"""
@@ -443,8 +512,14 @@ def aplicar_filtros(df, anexo_suseso, protocolo, region, tipo, mes, faena_codelc
     if holding != 'Todos' and 'Holding' in df_filtrado.columns:
         df_filtrado = df_filtrado[df_filtrado['Holding'] == holding].copy()
     
-    if nombre_empleador != 'Todos' and 'Nombre empleador' in df_filtrado.columns:
-        df_filtrado = df_filtrado[df_filtrado['Nombre empleador'] == nombre_empleador].copy()
+    # La programación trae 'Nombre empleador' y el seguimiento 'Nombre Empleador';
+    # sin este alias el filtro se ignoraba en silencio sobre df_seg.
+    if nombre_empleador != 'Todos':
+        _col_emp = ('Nombre empleador' if 'Nombre empleador' in df_filtrado.columns
+                    else 'Nombre Empleador' if 'Nombre Empleador' in df_filtrado.columns
+                    else None)
+        if _col_emp:
+            df_filtrado = df_filtrado[df_filtrado[_col_emp] == nombre_empleador].copy()
     
     if maritimo_portuario != 'Todos' and 'Faena Marítimo - Portuaria' in df_filtrado.columns:
         df_filtrado = df_filtrado[df_filtrado['Faena Marítimo - Portuaria'] == maritimo_portuario].copy()
@@ -898,6 +973,9 @@ try:
         df_seg_raw     = cargar_datos_seguimiento()
         df_maestro     = preparar_df_maestro(df_eventos, df_seg_raw)
         df_ep_detalle  = cargar_datos_ep_detalle()
+        # Si el seguimiento no trae las columnas EP_*, se reconstruyen desde
+        # 'EP Detalle' para que el toggle y el Tab de EP tengan de dónde leer.
+        df_maestro     = enriquecer_ep_desde_detalle(df_maestro, df_ep_detalle)
 
     # Validar que hay datos
     if len(df_maestro) == 0:
@@ -918,26 +996,51 @@ try:
     # filtros activos. La actualización es inmediata en un solo click.
     st.sidebar.header("🔍 Filtros")
 
-    # Toggle EP — arriba del sidebar, antes de los filtros
-    _ep_disponible_sidebar = 'EP_Total' in df_maestro.columns
+    # Ambos toggles trabajan con conjuntos de ID-CT, no con máscaras por fila:
+    # tanto la vigencia como las denuncias de EP son atributos del CENTRO, y una
+    # misma empresa aparece en varias filas (una por protocolo/agente). Filtrar
+    # por fila dejaba pasar centros no vigentes y descuadraba el avance.
+    _id_col_ct       = 'Identificador único (ID) centro de trabajo (CT)'
+    _ids_no_vigentes = ids_ct_no_vigentes(df_seg_raw)
+    _ids_con_ep      = (
+        set(norm_id_ct(df_maestro.loc[
+            pd.to_numeric(df_maestro['EP_Total'], errors='coerce').fillna(0) > 0, _id_col_ct
+        ]))
+        if 'EP_Total' in df_maestro.columns and _id_col_ct in df_maestro.columns else set()
+    )
+
+    _ep_disponible_sidebar = bool(_ids_con_ep)
     solo_ep = st.sidebar.toggle(
         "🚨 Ver solo centros con denuncias de EP",
         value=False,
         disabled=not _ep_disponible_sidebar,
-        help="Filtra el programa mostrando solo centros con historial de EP (2019-2025)"
+        help=("Filtra el programa mostrando solo centros con historial de EP (2019-2025)"
+              if _ep_disponible_sidebar else
+              "Sin datos de EP disponibles: ejecuta el procesador HO para poblar la hoja 'EP Detalle'")
     )
 
     # Toggle "solo centros de trabajo vigentes" — lee la columna 'Vigente CT'
-    _vig_disponible = 'Vigente CT' in df_maestro.columns
+    _vig_disponible = bool(_ids_no_vigentes)
     solo_vigentes = st.sidebar.toggle(
         "🟢 Ver solo centros de trabajo vigentes",
         value=False,
         disabled=not _vig_disponible,
-        help="Deja fuera los centros de trabajo marcados como no vigentes en 'Vigente CT'"
+        help=("Deja fuera los centros marcados como no vigentes en 'Vigente CT'"
+              if _vig_disponible else
+              "El seguimiento no reporta centros no vigentes")
     )
     st.sidebar.markdown("---")
 
-    _base = df_maestro  # dataset unificado (programación + seguimiento), nunca se modifica
+    # Base: dataset unificado (programación + seguimiento). Los toggles EP y
+    # "vigentes" actúan como PRE-filtros: se aplican antes del cross-filtering
+    # para que las opciones de los selectbox, el contador del sidebar y TODAS las
+    # métricas/gráficos compartan exactamente el mismo universo.
+    _base = df_maestro
+    if solo_ep and _ep_disponible_sidebar:
+        _base = _base[norm_id_ct(_base[_id_col_ct]).isin(_ids_con_ep)]
+    if solo_vigentes and _vig_disponible:
+        _base = _base[~norm_id_ct(_base[_id_col_ct]).isin(_ids_no_vigentes)]
+    _base = _base.copy()
 
     # ── 1. Defaults e inicialización de session_state ─────────────────────────
     _defaults = {
@@ -1099,28 +1202,36 @@ try:
 
     # Contador y reseteo
     st.sidebar.markdown("---")
-    st.sidebar.caption(f"🔎 **{len(df_filtrado):,}** registros con los filtros actuales")
+    _pref = []
+    if solo_ep and _ep_disponible_sidebar:
+        _pref.append("solo CT con EP")
+    if solo_vigentes and _vig_disponible:
+        _pref.append("solo CT vigentes")
+    st.sidebar.caption(
+        f"🔎 **{len(df_filtrado):,}** registros con los filtros actuales"
+        + (f" · {' · '.join(_pref)}" if _pref else "")
+    )
 
     if st.sidebar.button("🔄 Resetear Filtros"):
         st.session_state['_ho_reset'] = True
         st.rerun()
 
-    if solo_ep and _ep_disponible_sidebar:
-        df_filtrado = df_filtrado[
-            pd.to_numeric(df_filtrado['EP_Total'], errors='coerce').fillna(0) > 0
-        ]
-
-    if solo_vigentes and _vig_disponible:
-        df_filtrado = df_filtrado[es_ct_vigente(df_filtrado['Vigente CT'])]
-
-    # df_seg: filtrado sólo para Tab 2 (Vigilancia de Salud).
-    # Tab 1 ya no lo necesita — sus métricas y tabla usan df_filtrado (= df_maestro filtrado).
+    # df_seg: seguimiento filtrado — alimenta "Fuera de Programa", Vigilancia de
+    # Salud y las realizadas fuera de programa que suman al avance del Tab 1.
     df_seg = (aplicar_filtros(df_seg_raw, anexo_suseso, protocolo, region, tipo, mes,
                               faena_codelco, gerente, maritimo_portuario, holding, nombre_empleador)
               if not df_seg_raw.empty else pd.DataFrame())
 
-    if solo_vigentes and not df_seg.empty and 'Vigente CT' in df_seg.columns:
-        df_seg = df_seg[es_ct_vigente(df_seg['Vigente CT'])]
+    # Los mismos pre-filtros del sidebar deben regir el seguimiento, y con el
+    # MISMO criterio por ID-CT: si no, el avance mezcla universos (realizadas de
+    # centros que el toggle ya excluyó de la programación).
+    if not df_seg.empty and _id_col_ct in df_seg.columns:
+        _ids_seg = norm_id_ct(df_seg[_id_col_ct])
+        if solo_ep and _ep_disponible_sidebar:
+            df_seg = df_seg[_ids_seg.isin(_ids_con_ep)]
+            _ids_seg = norm_id_ct(df_seg[_id_col_ct])
+        if solo_vigentes and _vig_disponible:
+            df_seg = df_seg[~_ids_seg.isin(_ids_no_vigentes)]
 
     # Métricas
     col1, col2, col3, col4 = st.columns(4)
@@ -1158,7 +1269,6 @@ try:
     # ── Preparación de datos compartidos entre tabs ──────────────────────────
     ESTADOS_FUERA = {'Realizada - fuera de programa'}
     _id_col_tab   = 'Identificador único (ID) centro de trabajo (CT)'
-    _ids_scope    = set(df_filtrado[_id_col_tab].unique())
 
     # Evaluaciones fuera del programa: usa df_seg (ya filtrado por sidebar)
     # Incluye tanto el label 'Realizada - fuera de programa' como filas con Es_Programado='No'
