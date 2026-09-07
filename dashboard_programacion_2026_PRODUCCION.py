@@ -843,8 +843,22 @@ def mostrar_resumen_detallado(df_filtrado, protocolo_seleccionado, seccion='tab1
             st.markdown("#### Por Agente")
             agente_df = df_filtrado[df_filtrado['Agente'] != 'Sin Agente']
             if len(agente_df) > 0:
-                agente_counts = agente_df['Agente'].value_counts().head(10).reset_index()
-                agente_counts.columns = ['Agente', 'Cantidad']
+                if 'tipo' in agente_df.columns:
+                    agente_counts = pd.crosstab(agente_df['Agente'], agente_df['tipo'])
+                    for _t in ('Cualitativa', 'Cuantitativa'):
+                        if _t not in agente_counts.columns:
+                            agente_counts[_t] = 0
+                    agente_counts = agente_counts[['Cualitativa', 'Cuantitativa']]
+                    agente_counts = (agente_counts
+                                     .assign(_total=agente_counts.sum(axis=1))
+                                     .sort_values('_total', ascending=False)
+                                     .head(10)
+                                     .drop(columns='_total')
+                                     .reset_index())
+                    agente_counts.columns = ['Agente', 'Cualitativas', 'Cuantitativas']
+                else:
+                    agente_counts = agente_df['Agente'].value_counts().head(10).reset_index()
+                    agente_counts.columns = ['Agente', 'Cantidad']
                 st.dataframe(agente_counts, use_container_width=True, hide_index=True)
             else:
                 st.info("No hay datos de agentes")
