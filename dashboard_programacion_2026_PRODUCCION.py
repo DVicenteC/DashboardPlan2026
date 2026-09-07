@@ -346,21 +346,40 @@ def enriquecer_ep_desde_detalle(df_maestro, df_ep_detalle):
 
 
 @st.cache_data
-def ids_ct_no_vigentes(df_seg_raw):
-    """IDs de centros de trabajo NO vigentes, según el seguimiento.
+def mapa_vigencia_ct(df_seg_raw):
+    """Vigencia por centro de trabajo ('Si'/'No') leída del SEGUIMIENTO.
 
-    'Vigente CT' es un atributo del centro, no de la fila (CT + protocolo +
-    agente). El seguimiento trae valores contradictorios para un mismo CT (hoy
-    14 casos); en esos empates manda el 'No', porque el filtro existe justamente
-    para ocultar centros cerrados.
+    Fuente: la hoja de seguimiento, no la de programación. La vigencia de un CT
+    cambia mes a mes; la programación la congela al armar el plan y hoy informa
+    'Si' en el 100% de sus filas, así que ahí no se puede leer una baja.
+
+    Se resuelve a nivel de CENTRO, no de fila (CT + protocolo + agente): es un
+    atributo del centro y el seguimiento trae valores contradictorios para un
+    mismo CT (hoy 14 casos). En esos empates manda el 'No', que es el criterio
+    que ya usa el toggle "solo centros vigentes".
     """
     id_col = 'Identificador único (ID) centro de trabajo (CT)'
     if df_seg_raw.empty or 'Vigente CT' not in df_seg_raw.columns or id_col not in df_seg_raw.columns:
-        return set()
+        return pd.Series(dtype='object')
     _val = df_seg_raw['Vigente CT'].astype(str).str.strip()
     _informado = (_val != '') & (_val.str.lower() != 'nan')
-    _no_vigente = _informado & ~es_ct_vigente(df_seg_raw['Vigente CT'])
-    return set(norm_id_ct(df_seg_raw.loc[_no_vigente, id_col]))
+    _por_ct = pd.DataFrame({
+        '_id':  norm_id_ct(df_seg_raw[id_col]),
+        '_vig': es_ct_vigente(df_seg_raw['Vigente CT']),
+    })[_informado.values]
+    if _por_ct.empty:
+        return pd.Series(dtype='object')
+    # min() sobre booleanos = "basta un 'No' para marcar el centro como no vigente"
+    return _por_ct.groupby('_id')['_vig'].min().map({True: 'Si', False: 'No'})
+
+
+@st.cache_data
+def ids_ct_no_vigentes(df_seg_raw):
+    """IDs de centros de trabajo NO vigentes, según el seguimiento."""
+    _mapa = mapa_vigencia_ct(df_seg_raw)
+    if _mapa.empty:
+        return set()
+    return set(_mapa.index[_mapa == 'No'])
 
 
 @st.cache_data
@@ -432,7 +451,6 @@ def preparar_df_maestro(df_eventos, df_seg_raw):
         'Es_Programado',
         'EP_Hipoacusia', 'EP_Silicosis', 'EP_Metales', 'EP_Plaguicidas', 'EP_Total',
         'Gerencia Nacional', 'Gerencia', 'Holding',
-        'Vigente CT'
     ]
     df_prog = df_eventos.copy()
 
@@ -469,17 +487,20 @@ def preparar_df_maestro(df_eventos, df_seg_raw):
             df_maestro[col] = df_maestro[seg_col].fillna(df_maestro[col])
             df_maestro = df_maestro.drop(columns=[seg_col])
 
-    # 'Vigente CT': el seguimiento es la fuente más fresca (marca los CT dados de
-    # baja). Si el seguimiento no trae valor para esa fila, se conserva el de la
-    # programación. Ojo: en df_prog los nulos ya vienen como 'Sin Vigente CT'.
-    if 'Vigente CT_seg' in df_maestro.columns:
-        _seg_val = df_maestro['Vigente CT_seg'].astype(str).str.strip()
-        _usar_seg = df_maestro['Vigente CT_seg'].notna() & (_seg_val != '') & (_seg_val.str.lower() != 'nan')
+    # 'Vigente CT' se resuelve desde el SEGUIMIENTO y a nivel de CENTRO, no por el
+    # join fila a fila: ese join tomaba el valor de una fila cualquiera del centro
+    # y, en los CT con valores contradictorios, terminaba mostrando 'Si' para
+    # centros que el propio seguimiento da de baja (23 filas / 13 CT). Así la
+    # columna y el toggle "solo centros vigentes" comparten un único criterio.
+    # El valor de la programación queda solo como respaldo, para CT que el
+    # seguimiento no conozca o si esa hoja no está disponible.
+    _mapa_vig = mapa_vigencia_ct(df_seg_raw)
+    if not _mapa_vig.empty:
+        _vig_ct = norm_id_ct(df_maestro[id_col]).map(_mapa_vig)
         if 'Vigente CT' in df_maestro.columns:
-            df_maestro['Vigente CT'] = df_maestro['Vigente CT'].where(~_usar_seg, _seg_val)
+            df_maestro['Vigente CT'] = _vig_ct.fillna(df_maestro['Vigente CT'])
         else:
-            df_maestro['Vigente CT'] = _seg_val
-        df_maestro = df_maestro.drop(columns=['Vigente CT_seg'])
+            df_maestro['Vigente CT'] = _vig_ct
 
     for col in SEG_COLS:
         if col not in df_maestro.columns:
