@@ -811,7 +811,8 @@ def mostrar_resumen_detallado(df_filtrado, protocolo_seleccionado, seccion='tab1
         st.markdown("### 📋 Detalle de Evaluaciones")
     
     # Resumen por dimensiones clave
-    col1, col2 = st.columns(2)
+    # Región ocupa 1/3 y Agente 2/3: los nombres de agente son largos y no caben al 50%
+    col1, col2 = st.columns([1, 2])
     
     with col1:
         st.markdown("#### Por Región")
@@ -859,7 +860,16 @@ def mostrar_resumen_detallado(df_filtrado, protocolo_seleccionado, seccion='tab1
                 else:
                     agente_counts = agente_df['Agente'].value_counts().head(10).reset_index()
                     agente_counts.columns = ['Agente', 'Cantidad']
-                st.dataframe(agente_counts, use_container_width=True, hide_index=True)
+                st.dataframe(
+                    agente_counts,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        'Agente':        st.column_config.TextColumn('Agente', width='medium'),
+                        'Cualitativas':  st.column_config.NumberColumn('Cuali.', width='small'),
+                        'Cuantitativas': st.column_config.NumberColumn('Cuanti.', width='small'),
+                    }
+                )
             else:
                 st.info("No hay datos de agentes")
     
