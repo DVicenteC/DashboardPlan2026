@@ -1068,7 +1068,7 @@ try:
     _vig_disponible = bool(_ids_no_vigentes)
     solo_vigentes = st.sidebar.toggle(
         "🟢 Ver solo centros de trabajo vigentes",
-        value=False,
+        value=True,
         disabled=not _vig_disponible,
         help=("Deja fuera los centros marcados como no vigentes en 'Vigente CT'"
               if _vig_disponible else
