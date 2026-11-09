@@ -1524,6 +1524,25 @@ try:
                 if rq_fuera_t1 > 0:
                     st.metric("Cuanti. fuera del programa", f"{rq_fuera_t1:,}")
             a4.metric("% Avance", f"{pct_t1}%")
+
+            # El seguimiento trae una fila por CT y agente, y una misma IPHO se abre en varios
+            # agentes (metales, plaguicidas): se cuenta una vez por CT, fecha y fuente.
+            if not df_seg.empty and 'IPHO - Resultado' in df_seg.columns:
+                _doc_ipho = [_id_col_tab, 'IPHO - Fecha', 'IPHO - Fuente']
+                _con_ipho = df_seg[df_seg['IPHO - Resultado'].notna()]
+                _justifica = (_con_ipho['Es_Programado'].eq('Sí')
+                              & (_con_ipho['Estado Cualitativa'].str.endswith('(IPHO)', na=False)
+                                 | _con_ipho['Estado Cuantitativa'].str.endswith('(IPHO)', na=False)))
+                i1, i2, _, _ = st.columns(4)
+                i1.metric("IPHO realizadas", f"{len(_con_ipho.drop_duplicates(_doc_ipho)):,}",
+                          help="Última IPHO desde el 01-01-2025 de los centros y agentes presentes en el "
+                               "seguimiento. Cada IPHO cuenta una vez, aunque abarque varios agentes.")
+                i2.metric("IPHO que justifican programadas",
+                          f"{len(_con_ipho[_justifica].drop_duplicates(_doc_ipho)):,}",
+                          f"{ipho_t1:,} evaluaciones",
+                          help="IPHO de ausencia o CT caduco que descartan evaluaciones programadas. "
+                               "No incluye el código 12, que sigue pendiente.")
+
             st.progress(pct_t1 / 100)
             _extras = []
             if no_aplica_t1 + ipho_t1 > 0:
