@@ -1024,6 +1024,21 @@ def mostrar_resumen_detallado(df_filtrado, protocolo_seleccionado, seccion='tab1
             key=f'download_btn_{seccion}'
         )
 
+def solo_por_ejecutar(df, protocolo_seleccionado, estados_fuera):
+    """Evaluaciones que componen 'Quedan por ejecutar': saca las realizadas del programa y las
+    justificadas por IPHO, con el mismo criterio de esos indicadores para que siempre calcen."""
+    if 'Estado Cualitativa' not in df.columns:
+        return df
+    estado = (df['Estado Cualitativa'].where(df['tipo'] == 'Cualitativa', df['Estado Cuantitativa'])
+              .fillna('').astype(str))
+    cerrada = (estado.str.startswith('Realizada') & ~estado.isin(estados_fuera)) | estado.str.endswith('(IPHO)')
+    if protocolo_seleccionado != 'Todos' and es_protocolo_plaguicidas(protocolo_seleccionado):
+        # Plaguicidas es un informe único por CT: con algo cerrado, el CT sale completo
+        id_col = 'Identificador único (ID) centro de trabajo (CT)'
+        return df[~df[id_col].isin(df.loc[cerrada & (df['tipo'] == 'Cualitativa'), id_col])]
+    return df[~cerrada]
+
+
 def mostrar_sigeco_ipho(df_seg):
     """Pestaña SIGECO e IPHO: qué aportó SIGECO y qué desviaciones justificó una IPHO.
     Usa el seguimiento (una fila por CT + agente), ya filtrado por el sidebar."""
@@ -1192,6 +1207,12 @@ try:
         help=("Deja fuera los centros marcados como no vigentes en 'Vigente CT'"
               if _vig_disponible else
               "El seguimiento no reporta centros no vigentes")
+    )
+    solo_pendiente = st.sidebar.toggle(
+        "📌 Ver solo trabajo pendiente",
+        value=False,
+        help="El detalle de evaluaciones y su descarga muestran solo lo que queda por ejecutar. "
+             "Los indicadores de avance y el gráfico mensual no cambian."
     )
     st.sidebar.markdown("---")
 
@@ -1371,6 +1392,8 @@ try:
         _pref.append("solo CT con EP")
     if solo_vigentes and _vig_disponible:
         _pref.append("solo CT vigentes")
+    if solo_pendiente:
+        _pref.append("detalle solo pendiente")
     st.sidebar.caption(
         f"🔎 **{len(df_filtrado):,}** registros con los filtros actuales"
         + (f" · {' · '.join(_pref)}" if _pref else "")
@@ -1477,7 +1500,9 @@ try:
             #  tras pend_t1, con scope exacto de IDs de df_filtrado)
 
             # ── Atrasadas ────────────────────────────────────────────────────
-            pa_t1 = int((df_cuali['Estado Cualitativa'] == 'Pendiente atrasada').sum())
+            pa_c  = int((df_cuali['Estado Cualitativa'] == 'Pendiente atrasada').sum())
+            pa_q  = int((df_cuanti['Estado Cuantitativa'] == 'Pendiente atrasada').sum())
+            pa_t1 = pa_c + pa_q
 
             es_plag_t1 = protocolo != 'Todos' and es_protocolo_plaguicidas(protocolo)
             if es_plag_t1:
@@ -1547,18 +1572,33 @@ try:
             _extras = []
             if no_aplica_t1 + ipho_t1 > 0:
                 _extras.append(f"Ajustado (excl. {no_aplica_t1 + ipho_t1:,} 'No aplica'): **{pct_ajust_t1}%**")
-            if ipho_t1 > 0:
-                _extras.append(f"Justificadas por IPHO (no cuentan como pendientes): **{ipho_t1:,}**")
             if solo_vs_t1 > 0:
                 _extras.append(f"Sólo VS sin eval ambiental: **{solo_vs_t1:,}**")
             if _extras:
                 st.caption("  |  ".join(_extras))
 
-            b1, b2, b3, b4 = st.columns(4)
-            b1.metric("Pendientes",        f"{pend_t1:,}",                                            delta_color="inverse")
-            b2.metric("Cuali. pendientes", f"{pend_cuali_t1:,}"  if pend_cuali_t1  is not None else "—", delta_color="inverse")
-            b3.metric("Cuanti. pendientes",f"{pend_cuanti_t1:,}" if pend_cuanti_t1 is not None else "—", delta_color="inverse")
-            b4.metric("Atrasadas",         f"{pa_t1:,}",                                             delta_color="inverse")
+            # Cálculo a la vista: programadas − realizadas = sin realizar;
+            # sin realizar − justificadas por IPHO = lo que de verdad queda por ejecutar.
+            st.markdown("##### 📌 Trabajo pendiente")
+            b1, b2, b3, b4, b5 = st.columns(5)
+            if pend_cuali_t1 is None:   # Plaguicidas se cuenta por CT, sin separar por tipo
+                b1.metric("Cuali. sin realizar", "—")
+                b2.metric("Cuanti. sin realizar", "—")
+                b3.metric("Justificadas por IPHO", f"{ipho_t1:,}")
+                b4.metric("Quedan por ejecutar", f"{pend_t1:,}")
+            else:
+                b1.metric("Cuali. sin realizar", f"{cuali_count - rc_prog_t1:,}",
+                          f"{cuali_count:,} − {rc_prog_t1:,} realizadas", delta_color="off")
+                b2.metric("Cuanti. sin realizar", f"{cuanti_count - rq_prog_t1:,}",
+                          f"{cuanti_count:,} − {rq_prog_t1:,} realizadas", delta_color="off")
+                b3.metric("Justificadas por IPHO", f"{ipho_t1:,}",
+                          f"{ipho_c:,} cuali. · {ipho_q:,} cuanti.", delta_color="off",
+                          help="Una IPHO de ausencia o CT caduco descarta la evaluación: ya no hay que ejecutarla.")
+                b4.metric("Quedan por ejecutar", f"{pend_t1:,}",
+                          f"{pend_cuali_t1:,} cuali. · {pend_cuanti_t1:,} cuanti.", delta_color="off",
+                          help="Sin realizar menos las justificadas por IPHO.")
+            b5.metric("Atrasadas", f"{pa_t1:,}", f"{pa_c:,} cuali. · {pa_q:,} cuanti.", delta_color="off",
+                      help="Parte de lo que queda por ejecutar con la fecha programada ya vencida.")
             st.markdown("---")
 
         # ── Programación mensual vs realizado ───────────────────────────────
@@ -1566,7 +1606,9 @@ try:
         if fig_barras:
             st.plotly_chart(fig_barras, use_container_width=True)
             with st.expander("📋 Ver Detalle de Evaluaciones", expanded=True):
-                mostrar_resumen_detallado(df_filtrado, protocolo, seccion='tab1')
+                mostrar_resumen_detallado(
+                    solo_por_ejecutar(df_filtrado, protocolo, ESTADOS_FUERA) if solo_pendiente else df_filtrado,
+                    protocolo, seccion='tab1')
         else:
             st.warning("No hay datos para mostrar con los filtros seleccionados")
 
