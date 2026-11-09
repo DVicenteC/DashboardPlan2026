@@ -175,6 +175,12 @@ def parsear_fecha_flexible(serie):
     # 1. Intentar formato DD-MM-YYYY primero
     resultado = pd.to_datetime(serie, format='%d-%m-%Y', errors='coerce')
 
+    # ISO aparte y antes de dayfirst: con dayfirst=True pandas lee '2026-10-01' como
+    # 10 de enero y deja vacía '2026-06-15' (mes 15).
+    mascara_iso = resultado.isna() & serie.astype(str).str.match(r'^\d{4}-\d{2}-\d{2}')
+    if mascara_iso.any():
+        resultado[mascara_iso] = pd.to_datetime(serie[mascara_iso].astype(str).str[:10], format='%Y-%m-%d', errors='coerce')
+
     # 2. Intentar formato DD/MM/YYYY o DD/MM/YY (Nacional)
     mascara_nulos = resultado.isna() & serie.notna() & (serie.astype(str).str.strip() != '')
     if mascara_nulos.any():
@@ -235,6 +241,8 @@ def normalizar_columnas_seguimiento(df):
         'Numero de trabajadores evaluados 2026 Mujeres': 'Número de trabajadores evaluados 2026 Mujeres',
         'N de Trabajadores CT': 'N° de Trabajadores CT',
         'Grupo Act. Economica': 'Grupo Act. Económica',
+        'Fuente Evaluacion Cualitativa': 'Fuente Evaluación Cualitativa',
+        'Origen Observacion': 'Origen Observación',
         'Protocolo': 'Protocolo_SUSESO_Interno', # Oculto al usuario
         'Codigo Europeo': 'CODIGO_EUROPEO_Interno', # Oculto al usuario
         'Programa': 'Protocolo', # Usar nombre legible como 'Protocolo'
@@ -265,7 +273,8 @@ def cargar_datos_seguimiento():
         df = normalizar_columnas_seguimiento(df)
         for col in ['Fecha de Evaluación Cualitativa 2026',
                     'Fecha de Evaluación Cuantitativa 2026',
-                    'Fecha de Evaluación Vigilancia de Salud 2026']:
+                    'Fecha de Evaluación Vigilancia de Salud 2026',
+                    'IPHO - Fecha']:
             if col in df.columns:
                 df[col] = parsear_fecha_flexible(df[col])
         return df
@@ -451,6 +460,8 @@ def preparar_df_maestro(df_eventos, df_seg_raw):
         'Es_Programado',
         'EP_Hipoacusia', 'EP_Silicosis', 'EP_Metales', 'EP_Plaguicidas', 'EP_Total',
         'Gerencia Nacional', 'Gerencia', 'Holding',
+        'IPHO - Resultado', 'IPHO - Fecha', 'IPHO - Fuente', 'IPHO - Detalle',
+        'Fuente Evaluación Cualitativa', 'Origen Observación',
     ]
     df_prog = df_eventos.copy()
 
@@ -977,6 +988,15 @@ def mostrar_resumen_detallado(df_filtrado, protocolo_seleccionado, seccion='tab1
                 columnas_detalle.append(src)
                 nombres_columnas.append(dst)
 
+        # SIGECO / IPHO: sólo si el seguimiento ya las trae con datos
+        for src, dst in {'Fuente Evaluación Cualitativa': 'Fuente Cuali.',
+                         'IPHO - Resultado':              'Resultado IPHO',
+                         'IPHO - Fecha':                  'Fecha IPHO',
+                         'Origen Observación':            'Origen Observación'}.items():
+            if src in df_filtrado.columns and df_filtrado[src].notna().any():
+                columnas_detalle.append(src)
+                nombres_columnas.append(dst)
+
         # Alineación robusta de encabezados
         map_final = {c: n for c, n in zip(columnas_detalle, nombres_columnas)}
         columnas_disponibles = [c for c in columnas_detalle if c in df_filtrado.columns]
@@ -985,6 +1005,8 @@ def mostrar_resumen_detallado(df_filtrado, protocolo_seleccionado, seccion='tab1
         df_tabla = df_filtrado[columnas_disponibles].copy()
         df_tabla['fecha'] = df_tabla['fecha'].dt.strftime('%d-%m-%Y')
         df_tabla.columns = nombres_disponibles
+        if 'Fecha IPHO' in df_tabla.columns:
+            df_tabla['Fecha IPHO'] = pd.to_datetime(df_tabla['Fecha IPHO'], errors='coerce').dt.strftime('%d-%m-%Y')
         df_tabla = df_tabla.sort_values('Fecha')
         
         st.dataframe(df_tabla, use_container_width=True, height=400, hide_index=True)
@@ -1001,6 +1023,103 @@ def mostrar_resumen_detallado(df_filtrado, protocolo_seleccionado, seccion='tab1
             mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             key=f'download_btn_{seccion}'
         )
+
+def mostrar_sigeco_ipho(df_seg):
+    """Pestaña SIGECO e IPHO: qué aportó SIGECO y qué desviaciones justificó una IPHO.
+    Usa el seguimiento (una fila por CT + agente), ya filtrado por el sidebar."""
+    st.markdown("#### SIGECO e IPHO")
+    if df_seg.empty or 'IPHO - Resultado' not in df_seg.columns:
+        st.info("El seguimiento aún no trae las columnas de SIGECO e IPHO. Aparecerán con la próxima carga mensual.")
+        return
+
+    id_col, c_fuente, c_origen = ('Identificador único (ID) centro de trabajo (CT)',
+                                  'Fuente Evaluación Cualitativa', 'Origen Observación')
+    agente_col = 'AGENTE' if 'AGENTE' in df_seg.columns else 'Agente'
+    df = df_seg.copy()
+    for c in ('IPHO - Fuente', 'IPHO - Detalle', c_fuente, c_origen):
+        if c not in df.columns:
+            df[c] = None
+
+    # Una IPHO o cualitativa de plaguicidas se abre en 8 agentes: se cuenta una vez por CT.
+    es_plag = df['Protocolo'].map(es_protocolo_plaguicidas)
+    df_u = pd.concat([df[~es_plag], df[es_plag].drop_duplicates(
+        subset=[id_col, 'IPHO - Resultado', 'IPHO - Fuente', c_fuente, c_origen])])
+
+    con_sigeco = df_u[c_fuente].isin(['SIGECO', 'ambas'])
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Cualitativas con SIGECO", f"{int(con_sigeco.sum()):,}")
+    m2.metric("De ellas, fuera de programa", f"{int((con_sigeco & (df_u['Es_Programado'] == 'No')).sum()):,}")
+    m3.metric("Filas con IPHO", f"{int(df_u['IPHO - Resultado'].notna().sum()):,}")
+    m4.metric("Con código por IPHO (3, 4, 5, 12)", f"{int(df_u[c_origen].notna().sum()):,}")
+    st.caption("Plaguicidas se cuenta una vez por centro de trabajo.")
+
+    col_izq, col_der = st.columns([1, 2])
+    with col_izq:
+        st.markdown("##### Resultado de la IPHO, por fuente")
+        cruce = pd.crosstab(df_u['IPHO - Resultado'], df_u['IPHO - Fuente'])
+        if cruce.empty:
+            st.info("Sin IPHO para los filtros actuales.")
+        else:
+            cruce = cruce.reindex([r for r in ['Ausencia', 'CT caduco', 'Indefinido', 'Presencia'] if r in cruce.index])
+            cruce['Total'] = cruce.sum(axis=1)
+            st.dataframe(cruce.reset_index().rename(columns={'IPHO - Resultado': 'Resultado'}),
+                         use_container_width=True, hide_index=True)
+
+    with col_der:
+        st.markdown("##### Desviaciones justificadas por IPHO, por protocolo")
+        just = df_u[df_u[c_origen].notna()].copy()
+        if just.empty:
+            st.info("Ninguna IPHO justifica desviaciones con los filtros actuales.")
+        else:
+            etiquetas = {'4': '4 · Se descarta exposición', '5': '5 · CT cerrado',
+                         '3': '3 · CT no vigente', '12': '12 · Empresa no responde'}
+            colores = dict(zip(etiquetas.values(), ['#1A85C8', '#A23B72', '#C97F00', '#2C9A5F']))
+            just['Código'] = just['Observaciones'].astype(str).map(etiquetas)
+            just['Programa'] = just['Protocolo'].astype(str).str.replace(
+                'PROGRAMA DE VIGILANCIA POR EXPOSICION A ', '', regex=False).str.replace('*', '', regex=False)
+            datos = just.groupby(['Programa', 'Código']).size().reset_index(name='Filas')
+            fig = px.bar(datos, x='Filas', y='Programa', color='Código', orientation='h',
+                         color_discrete_map=colores, category_orders={'Código': list(etiquetas.values())},
+                         labels={'Programa': '', 'Código': 'Código Anexo 14'},
+                         height=max(260, 34 * datos['Programa'].nunique() + 120))
+            fig.update_traces(marker_line_color='white', marker_line_width=2)
+            fig.update_layout(yaxis={'categoryorder': 'total ascending'}, margin=dict(l=0, r=10, t=10, b=0))
+            st.plotly_chart(fig, use_container_width=True)
+
+    st.markdown("---")
+    vistas = {'Todas': df['IPHO - Resultado'].notna() | df[c_fuente].isin(['SIGECO', 'ambas']),
+              'Justificadas por IPHO': df[c_origen].notna(),
+              'Metal descartado por no estar listado en la IPHO':
+                  df['IPHO - Detalle'].astype(str).str.startswith('Metal no listado'),
+              'Cualitativas con SIGECO': df[c_fuente].isin(['SIGECO', 'ambas'])}
+    vista = st.selectbox("Mostrar", list(vistas), key='sigeco_vista')
+    columnas = {'Region Sucursal': 'Región', 'Nombre Empleador': 'Nombre empleador', id_col: 'ID CT',
+                'Protocolo': 'Protocolo', agente_col: 'Agente', 'Es_Programado': 'Programado',
+                'Estado Cualitativa': 'Estado Cuali.', 'Estado Cuantitativa': 'Estado Cuanti.',
+                'Observaciones': 'Código Anexo 14', 'IPHO - Resultado': 'Resultado IPHO',
+                'IPHO - Fecha': 'Fecha IPHO', 'IPHO - Fuente': 'Fuente IPHO', 'IPHO - Detalle': 'Detalle IPHO',
+                c_fuente: 'Fuente Cuali.', 'Fecha de Evaluación Cualitativa 2026': 'Fecha real Cuali.',
+                c_origen: 'Origen Observación'}
+    tabla = (df.loc[vistas[vista], [c for c in columnas if c in df.columns]]
+               .sort_values('IPHO - Fecha', ascending=False, na_position='last')
+               .rename(columns=columnas))
+    for c in ('Fecha IPHO', 'Fecha real Cuali.'):
+        if c in tabla.columns:
+            tabla[c] = pd.to_datetime(tabla[c], errors='coerce').dt.strftime('%d-%m-%Y')
+    st.caption(f"{len(tabla):,} filas")
+    st.dataframe(tabla, use_container_width=True, height=420, hide_index=True)
+
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+        tabla.to_excel(writer, index=False, sheet_name='SIGECO_IPHO')
+    st.download_button(
+        label="📥 Descargar en Excel",
+        data=buffer.getvalue(),
+        file_name=f'sigeco_ipho_{datetime.now().strftime("%Y%m%d")}.xlsx',
+        mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        key='download_sigeco_ipho'
+    )
+
 
 # ============================================================================
 # INTERFAZ PRINCIPAL
@@ -1327,8 +1446,9 @@ try:
     else:
         df_fuera_prog = pd.DataFrame()
 
-    tab1, tab2, tab3, tab4 = st.tabs([
-        "📊 Programación y Avance", "📋 Fuera de Programa", "🏥 Vigilancia de Salud", "🔬 Denuncias EP"
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "📊 Programación y Avance", "📋 Fuera de Programa", "🏥 Vigilancia de Salud", "🔬 Denuncias EP",
+        "🧾 SIGECO e IPHO"
     ])
 
     with tab1:
@@ -1347,6 +1467,12 @@ try:
             rc_prog_t1 = int(mask_real_c.sum())
             rq_prog_t1 = int(mask_real_q.sum())
 
+            # ── Justificadas por IPHO: ausencia o CT cerrado declaran que la evaluación
+            # ya no se hará, así que no son trabajo pendiente ('No aplica - … (IPHO)').
+            mask_ipho_c = df_cuali['Estado Cualitativa'].str.endswith('(IPHO)', na=False)
+            mask_ipho_q = df_cuanti['Estado Cuantitativa'].str.endswith('(IPHO)', na=False)
+            ipho_c, ipho_q = int(mask_ipho_c.sum()), int(mask_ipho_q.sum())
+
             # (rc_fuera_t1 / rq_fuera_t1 / rt_total_t1 se calculan más abajo,
             #  tras pend_t1, con scope exacto de IDs de df_filtrado)
 
@@ -1359,15 +1485,18 @@ try:
                 pt_t1     = int(df_filtrado[id_col_p].nunique())
                 rt_t1     = int(df_filtrado[mask_real_c.reindex(df_filtrado.index, fill_value=False)][id_col_p].nunique())
                 pend_cuali_t1 = pend_cuanti_t1 = None
+                # Plaguicidas se cuenta por CT: un CT con algo realizado ya no resta como justificado
+                ipho_t1 = len(set(df_cuali.loc[mask_ipho_c, id_col_p]) - set(df_cuali.loc[mask_real_c, id_col_p]))
             else:
                 # Denominadores = filas de df_filtrado por tipo (misma fuente que la tabla)
                 pt_t1          = cuali_count + cuanti_count
                 rt_t1          = rc_prog_t1 + rq_prog_t1
-                pend_cuali_t1  = cuali_count - rc_prog_t1
-                pend_cuanti_t1 = cuanti_count - rq_prog_t1
+                pend_cuali_t1  = cuali_count - rc_prog_t1 - ipho_c
+                pend_cuanti_t1 = cuanti_count - rq_prog_t1 - ipho_q
+                ipho_t1        = ipho_c + ipho_q
 
             pct_t1  = round(rt_t1 / pt_t1 * 100, 1) if pt_t1 > 0 else 0
-            pend_t1 = pt_t1 - rt_t1
+            pend_t1 = pt_t1 - rt_t1 - ipho_t1
 
             no_aplica_c  = int((df_cuali['Estado Cualitativa']  == 'No aplica').sum())
             no_aplica_q  = int((df_cuanti['Estado Cuantitativa'] == 'No aplica').sum())
@@ -1375,7 +1504,7 @@ try:
             solo_vs_c    = int((df_cuali['Estado Cualitativa']  == 'Sólo VS - sin eval ambiental').sum())
             solo_vs_q    = int((df_cuanti['Estado Cuantitativa'] == 'Sólo VS - sin eval ambiental').sum())
             solo_vs_t1   = solo_vs_c + solo_vs_q
-            pt_ajust_t1  = pt_t1 - no_aplica_t1
+            pt_ajust_t1  = pt_t1 - no_aplica_t1 - ipho_t1
             pct_ajust_t1 = round(rt_t1 / pt_ajust_t1 * 100, 1) if pt_ajust_t1 > 0 else 0
 
                 # Fuera del programa: usa df_fuera_prog pre-calculado antes de los tabs
@@ -1397,8 +1526,10 @@ try:
             a4.metric("% Avance", f"{pct_t1}%")
             st.progress(pct_t1 / 100)
             _extras = []
-            if no_aplica_t1 > 0:
-                _extras.append(f"Ajustado (excl. {no_aplica_t1:,} 'No aplica'): **{pct_ajust_t1}%**")
+            if no_aplica_t1 + ipho_t1 > 0:
+                _extras.append(f"Ajustado (excl. {no_aplica_t1 + ipho_t1:,} 'No aplica'): **{pct_ajust_t1}%**")
+            if ipho_t1 > 0:
+                _extras.append(f"Justificadas por IPHO (no cuentan como pendientes): **{ipho_t1:,}**")
             if solo_vs_t1 > 0:
                 _extras.append(f"Sólo VS sin eval ambiental: **{solo_vs_t1:,}**")
             if _extras:
@@ -1427,10 +1558,14 @@ try:
         else:
             fp_cuali  = int(df_fuera_prog['Estado Cualitativa'].isin(ESTADOS_FUERA).sum()) if 'Estado Cualitativa' in df_fuera_prog.columns else 0
             fp_cuanti = int(df_fuera_prog['Estado Cuantitativa'].isin(ESTADOS_FUERA).sum()) if 'Estado Cuantitativa' in df_fuera_prog.columns else 0
-            f1, f2, f3 = st.columns(3)
+            f1, f2, f3, f4 = st.columns(4)
             f1.metric("Total fuera de programa", f"{fp_cuali + fp_cuanti:,}")
             f2.metric("Cualitativas", f"{fp_cuali:,}")
             f3.metric("Cuantitativas", f"{fp_cuanti:,}")
+            if 'Fuente Evaluación Cualitativa' in df_fuera_prog.columns:
+                fp_sigeco = int((df_fuera_prog['Estado Cualitativa'].isin(ESTADOS_FUERA)
+                                 & df_fuera_prog['Fuente Evaluación Cualitativa'].isin(['SIGECO', 'ambas'])).sum())
+                f4.metric("Cualitativas: filas con SIGECO", f"{fp_sigeco:,}")
             st.markdown("---")
 
             # Columnas equivalentes a "Listado Completo de Evaluaciones"
@@ -1487,6 +1622,7 @@ try:
                 (col_fc_fp,                          'Fecha real Cuali.'),
                 ('Estado Cuantitativa',              'Estado Cuanti.'),
                 (col_fq_fp,                          'Fecha real Cuanti.'),
+                ('Fuente Evaluación Cualitativa',    'Fuente Cuali.'),
             ]
             _src_cols  = [s for s, _ in _col_map if s in df_fp.columns]
             _disp_cols = [d for s, d in _col_map if s in df_fp.columns]
@@ -1541,8 +1677,11 @@ try:
             else:
                 st.info("No hay registros de Vigilancia de Salud en el seguimiento.")
 
+    with tab5:
+        mostrar_sigeco_ipho(df_seg)
+
     with tab4:
-        _EP_COLS = ['EP_Hipoacusia', 'EP_Silicosis', 'EP_Metales', 'EP_Plaguicidas', 'EP_Total']
+        _EP_COLS =['EP_Hipoacusia', 'EP_Silicosis', 'EP_Metales', 'EP_Plaguicidas', 'EP_Total']
         _id_col  = 'Identificador único (ID) centro de trabajo (CT)'
         _ep_pivot_ok   = all(c in df_filtrado.columns for c in _EP_COLS) and not df_filtrado.empty
         _ep_detalle_ok = not df_ep_detalle.empty and 'Agente de Riesgo' in df_ep_detalle.columns and 'ID-CT' in df_ep_detalle.columns
